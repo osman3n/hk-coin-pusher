@@ -20,6 +20,25 @@
     });
     return _mats[k];
   }
+  /* Flat shading is right for a plank, a cabinet, a stack of crates -- it
+   * gives hard edges that read as built things. It is wrong for every round
+   * object: at ten segments a sphere renders as a faceted ball, so the
+   * 垃圾蟲 looked like a disco lamp and the 他媽哥池 like a cut gem.
+   * Curved primitives therefore borrow a smooth twin of whatever material
+   * they were handed. Materials stay shared and cached, so this costs one
+   * clone per (colour, roughness, metalness) trio, not one per prop.
+   */
+  var _smoothMats = {};
+  function smoothOf(mat) {
+    if (!mat || !mat.isMeshStandardMaterial) return mat;
+    var k = mat.uuid;
+    if (_smoothMats[k]) return _smoothMats[k];
+    var m = mat.clone();
+    m.flatShading = false;
+    _smoothMats[k] = m;
+    return m;
+  }
+
   var GOLD = 0xd9a441, CREAM = 0xf2e6d0, DARK = 0x2a241c;
   // geometry has to match the simulation exactly, so read the radius from sim.js
   var COIN_R = (G.Sim && G.Sim.COIN_R) || 0.036;
@@ -33,19 +52,24 @@
     return m;
   }
   function cyl(rt, rb, h, seg, mat, x, y, z) {
-    var m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 12), mat);
+    seg = seg || 12;
+    // a 6- or 8-sided cylinder is meant to be angular (a pencil, a post);
+    // at 12+ it is meant to be round, so it gets the smooth material
+    var use = seg >= 12 ? smoothOf(mat) : mat;
+    var m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), use);
     m.position.set(x || 0, y || 0, z || 0);
     m.castShadow = m.receiveShadow = true;
     return m;
   }
   function sph(r, mat, x, y, z, seg) {
-    var m = new THREE.Mesh(new THREE.SphereGeometry(r, seg || 10, seg || 8), mat);
+    var n = seg || 16;
+    var m = new THREE.Mesh(new THREE.SphereGeometry(r, n, Math.max(6, Math.round(n * 0.7))), smoothOf(mat));
     m.position.set(x || 0, y || 0, z || 0);
     m.castShadow = m.receiveShadow = true;
     return m;
   }
   function tor(r, t, mat, x, y, z, rotX) {
-    var m = new THREE.Mesh(new THREE.TorusGeometry(r, t, 8, 16), mat);
+    var m = new THREE.Mesh(new THREE.TorusGeometry(r, t, 10, 24), smoothOf(mat));
     m.position.set(x || 0, y || 0, z || 0);
     if (rotX) m.rotation.x = rotX;
     m.castShadow = true;
@@ -167,16 +191,32 @@
   };
   B.lukBo = function () {
     var g = new THREE.Group();
-    g.add(cyl(0.036, 0.04, 0.145, 12, M(0x2f6b3d, 0.45), 0, 0.072, 0));
-    g.add(cyl(0.022, 0.022, 0.03, 10, M(0x2f6b3d, 0.45), 0, 0.158, 0));
-    g.add(cyl(0.026, 0.026, 0.012, 10, M(GOLD, 0.4, 0.5), 0, 0.176, 0));
-    g.add(cyl(0.030, 0.030, 0.075, 12, plateTex(64, 64, function (c, w, h) {
-      c.fillStyle = '#2f6b3d'; c.fillRect(0, 0, w, h);
-      c.fillStyle = '#f2e6d0'; c.font = 'bold 11px sans-serif';
-      c.fillText('綠寶', 6, 26);
-      c.font = '9px sans-serif'; c.fillText('ORANGE', 4, 42);
-      c.fillStyle = '#e8862f'; c.beginPath(); c.arc(32, 52, 8, 0, 7); c.fill();
-    }), 0, 0.075, 0));
+    // 綠寶 was a squat green glass bottle, not a can: a wide body that
+    // shoulders down to a short neck, gold crown, and a paper label that
+    // stops short of the shoulder.
+    var glass = M(0x2f6b3d, 0.28);
+    g.add(cyl(0.042, 0.046, 0.095, 18, glass, 0, 0.050, 0));
+    g.add(cyl(0.0435, 0.0465, 0.007, 18, M(0x275c34, 0.30), 0, 0.0025, 0));  // base
+    g.add(cyl(0.023, 0.042, 0.030, 18, glass, 0, 0.1125, 0));                 // shoulder
+    g.add(cyl(0.019, 0.021, 0.026, 16, glass, 0, 0.1405, 0));                 // neck
+    g.add(cyl(0.0235, 0.0225, 0.011, 16, M(0xc9a227, 0.34, 0.85), 0, 0.1590, 0));  // crown
+    for (var r = 0; r < 10; r++) {                                            // crown ridges
+      var ra = r * Math.PI / 5;
+      g.add(box(0.003, 0.010, 0.003, M(0xa8861e, 0.4, 0.8),
+        Math.cos(ra) * 0.0225, 0.159, Math.sin(ra) * 0.0225));
+    }
+    g.add(cyl(0.0432, 0.0452, 0.052, 18, plateTex(128, 128, function (c, w, h) {
+      c.fillStyle = '#f2ece0'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#2f6b3d'; c.fillRect(0, 0, w, 16);
+      c.fillStyle = '#e8862f';
+      c.beginPath(); c.arc(w / 2, 46, 15, 0, 7); c.fill();
+      c.fillStyle = '#f2ece0'; c.font = 'bold 10px sans-serif';
+      c.textAlign = 'center'; c.fillText('綠寶', w / 2, 49);
+      c.fillStyle = '#2f6b3d'; c.font = 'bold 13px sans-serif';
+      c.fillText('橙汁', w / 2, 76);
+      c.font = '7px sans-serif'; c.fillStyle = '#6b6b5c';
+      c.fillText('GREEN SPOT', w / 2, 90);
+    }), 0, 0.056, 0));
     return g;
   };
   B.newspaper = function () {
@@ -195,11 +235,36 @@
   };
   B.chalkHopscotch = function () {
     var g = new THREE.Group();
-    g.add(box(0.055, 0.02, 0.02, M(0xf0ece0, 0.95), 0, 0.01, 0));
-    g.add(box(0.02, 0.02, 0.055, M(0xe8e2d0, 0.95), 0.035, 0.019, 0.02));
-    g.add(box(0.005, 0.001, 0.14, M(0xf2eee2, 0.9), -0.06, 0.001, 0.02));
-    g.add(box(0.005, 0.001, 0.14, M(0xf2eee2, 0.9), 0.06, 0.001, 0.02));
-    g.add(box(0.12, 0.001, 0.005, M(0xf2eee2, 0.9), 0, 0.001, 0.09));
+    // Drawn on the ground, so the mark is a painted plate: eight squares and
+    // the numbers are legible from above, which stacks of boxes never were.
+    var ground = tex(256, 256, function (c, w, h) {
+      c.clearRect(0, 0, w, h);
+      c.strokeStyle = '#efe9dc'; c.lineWidth = 5; c.lineCap = 'round';
+      var cols = 3, cw = w / cols, ch = h / 5;
+      var cells = [[1, 0], [1, 1], [0, 2], [2, 2], [1, 3], [1, 4]];
+      for (var i = 0; i < cells.length; i++) {
+        var cx = cells[i][0] * cw, cy = cells[i][1] * ch;
+        c.strokeRect(cx + 7, cy + 7, cw - 14, ch - 14);
+        c.fillStyle = 'rgba(239,233,220,.92)';
+        c.font = 'bold 34px serif'; c.textAlign = 'center';
+        c.fillText(String(i + 1), cx + cw / 2, cy + ch / 2 + 12);
+      }
+      // the chalk drags, so nothing is perfectly straight
+      c.globalAlpha = 0.28; c.lineWidth = 2;
+      for (var j = 0; j < 18; j++) {
+        c.beginPath();
+        c.moveTo((j * 53) % w, (j * 37) % h);
+        c.lineTo((j * 53) % w + 22, (j * 37) % h + 9);
+        c.stroke();
+      }
+    });
+    g.add(box(0.155, 0.002, 0.155,
+      new THREE.MeshStandardMaterial({ map: ground, roughness: 0.95, transparent: true }),
+      0, 0.001, 0));
+    // a stub of chalk left lying on it
+    var ch = cyl(0.008, 0.009, 0.046, 6, M(0xf2eee2, 0.95), 0.055, 0.011, -0.052);
+    ch.rotation.z = Math.PI / 2; ch.rotation.y = 0.6;
+    g.add(ch);
     return g;
   };
 
@@ -249,10 +314,26 @@
   };
   B.brickPhone = function () {
     var g = new THREE.Group();
-    g.add(box(0.055, 0.16, 0.035, M(0x24242a, 0.6), 0, 0.09, 0));
-    g.add(box(0.045, 0.03, 0.012, M(0x0d0d10, 0.3), 0, 0.15, 0.02));
-    for (var i = 0; i < 4; i++) g.add(box(0.04, 0.008, 0.006, M(0x3a3a3a, 0.6), 0, 0.10 - i * 0.014, 0.019));
-    g.add(cyl(0.005, 0.005, 0.09, 6, M(0x1a1a1a, 0.6), 0.03, 0.20, -0.01));
+    // The 大哥大's whole joke is the size: a long body, a stubby antenna
+    // twice the length of the handset, and a number pad you could dial with
+    // a thumb. Builders kept flattening it into a black slab.
+    var case_ = M(0x24242a, 0.55), rubber = M(0x141418, 0.75);
+    g.add(box(0.058, 0.185, 0.040, case_, 0, 0.098, 0));           // body
+    g.add(box(0.060, 0.016, 0.042, rubber, 0, 0.012, 0));          // boot
+    g.add(box(0.052, 0.030, 0.006, M(0x3a3a42, 0.5), 0, 0.176, 0.019)); // earpiece
+    for (var h = 0; h < 5; h++) {
+      g.add(box(0.0055, 0.004, 0.003, M(0x0d0d10, 0.6), -0.016 + h * 0.008, 0.180, 0.0225));
+    }
+    g.add(box(0.044, 0.032, 0.005, M(0x0e1418, 0.28), 0, 0.140, 0.0205));  // screen
+    g.add(box(0.036, 0.024, 0.002, M(0x2a4a34, 0.20), 0, 0.140, 0.0230));  // LCD
+    for (var r = 0; r < 4; r++) {                                   // keypad
+      for (var c = 0; c < 3; c++) {
+        g.add(box(0.0115, 0.0095, 0.0035, M(0x4a4a52, 0.55),
+          -0.0155 + c * 0.0155, 0.104 - r * 0.0145, 0.0205));
+      }
+    }
+    g.add(box(0.0075, 0.052, 0.0075, M(0x1a1a1e, 0.5), 0.027, 0.222, -0.012)); // stub antenna
+    g.add(cyl(0.0050, 0.0050, 0.014, 8, M(0x3a3a40, 0.45), 0.027, 0.255, -0.012)); // tip
     return g;
   };
   B.redWhiteBlue = function () {
@@ -279,35 +360,122 @@
   };
   B.sharkFinBowl = function () {
     var g = new THREE.Group();
-    g.add(cyl(0.075, 0.045, 0.055, 14, M(0xf0ece0, 0.5), 0, 0.028, 0));
-    g.add(cyl(0.062, 0.062, 0.004, 14, M(0xe8e2d0, 0.5), 0, 0.052, 0));
-    g.add(cyl(0.055, 0.055, 0.012, 14, M(0xd9c9a8, 0.8), 0, 0.058, 0));
-    g.add(cone(0.028, 0.055, 6, M(0xc9b48f, 0.6), 0.01, 0.085, 0));
-    g.add(box(0.012, 0.13, 0.012, M(0x8a5a2a, 0.7), 0.05, 0.10, 0.03));
-    g.add(box(0.012, 0.13, 0.012, M(0x8a5a2a, 0.7), -0.05, 0.10, 0.03));
+    /* The two chopsticks stood outside the bowl, so the whole thing read as a
+     * basket. A 魚翅撈飯 is a bowl, a mound of rice, a fin standing up in it
+     * and two chopsticks resting across the rim.
+     */
+    var porcelain = M(0xf4f0e6, 0.34), rim = M(0x1e4a7a, 0.30), rice = M(0xfbf8ee, 0.86);
+    // bowl: a lathed profile rather than a cone, so it has a foot and a lip
+    var prof = [];
+    prof.push(new THREE.Vector2(0.030, 0.000));
+    prof.push(new THREE.Vector2(0.034, 0.006));
+    prof.push(new THREE.Vector2(0.052, 0.020));
+    prof.push(new THREE.Vector2(0.072, 0.046));
+    prof.push(new THREE.Vector2(0.078, 0.058));
+    prof.push(new THREE.Vector2(0.074, 0.060));
+    prof.push(new THREE.Vector2(0.066, 0.050));
+    prof.push(new THREE.Vector2(0.046, 0.026));
+    prof.push(new THREE.Vector2(0.030, 0.014));
+    prof.push(new THREE.Vector2(0.000, 0.012));
+    var bowl = new THREE.Mesh(new THREE.LatheGeometry(prof, 24), smoothOf(porcelain));
+    bowl.castShadow = bowl.receiveShadow = true;
+    g.add(bowl);
+    // the blue band every HK bowl had
+    var band = cyl(0.0765, 0.0695, 0.010, 24, rim, 0, 0.0545, 0);
+    g.add(band);
+    // rice mound, sitting inside the rim
+    var mound = sph(0.055, rice, 0, 0.046, 0, 18);
+    mound.scale.set(1, 0.62, 1);
+    g.add(mound);
+    // the fin: a swept triangle, undercut so it reads as cartilage
+    var finMat = M(0xc2a878, 0.55);
+    var finShape = new THREE.Shape();
+    finShape.moveTo(0, 0);
+    finShape.lineTo(0.030, 0.014);
+    finShape.lineTo(0.038, 0.062);
+    finShape.lineTo(0.016, 0.040);
+    finShape.lineTo(0.002, 0.012);
+    finShape.lineTo(0, 0);
+    var fin = new THREE.Mesh(new THREE.ExtrudeGeometry(finShape, {
+      depth: 0.010, bevelEnabled: true, bevelSize: 0.0018, bevelThickness: 0.0018,
+      bevelSegments: 2, curveSegments: 2
+    }), smoothOf(finMat));
+    fin.position.set(-0.014, 0.050, -0.005);
+    fin.rotation.y = 0.35;
+    fin.castShadow = true;
+    g.add(fin);
+    // chopsticks resting across the rim, not standing in the air
+    var stick = M(0x8a5a2a, 0.68);
+    for (var i = 0; i < 2; i++) {
+      var st = cyl(0.0032, 0.0042, 0.150, 8, stick, 0.004 + i * 0.011, 0.066, -0.012);
+      st.rotation.z = Math.PI / 2 - 0.06;
+      st.rotation.y = 0.42;
+      g.add(st);
+    }
     return g;
   };
   B.yukLong = function () {
     var g = new THREE.Group();
-    g.add(box(0.15, 0.19, 0.008, M(0xe8c84a, 0.85), 0, 0.096, 0));
-    g.add(box(0.14, 0.07, 0.002, plateTex(64, 32, function (c, w, h) {
-      c.fillStyle = '#c8342b'; c.fillRect(0, 0, w, h);
-      c.fillStyle = '#f2e6d0'; c.font = 'bold 11px serif'; c.fillText('小流氓', 4, 14);
-      c.font = '7px serif'; c.fillText('第 88 期', 4, 26);
-    }), 0, 0.155, 0.005));
-    g.add(box(0.12, 0.10, 0.002, M(0x2a2a2a, 0.7), 0, 0.09, 0.005));
+    // 玉郎漫畫 is a stapled booklet with a lurid cover, a spine and page
+    // edges -- a flat plate reads as a poster, not an object on a table.
+    var yellow = M(0xe8c84a, 0.82);
+    g.add(box(0.150, 0.196, 0.009, yellow, 0, 0.098, 0));             // back cover
+    g.add(box(0.144, 0.188, 0.011, M(0xf2ecd8, 0.9), 0, 0.094, 0));   // page block
+    for (var p2 = 0; p2 < 9; p2++) {                                   // page edges
+      g.add(box(0.142, 0.0012, 0.0118, M(0xe2dcc8 - p2 * 0x000101, 0.95),
+        0, 0.006 + p2 * 0.0205, 0));
+    }
+    g.add(box(0.150, 0.196, 0.005, plateTex(128, 168, function (c, w, h) {
+      c.fillStyle = '#e8c84a'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#c8342b'; c.fillRect(6, 6, w - 12, 44);
+      c.fillStyle = '#f2e6d0'; c.font = 'bold 24px serif'; c.textAlign = 'center';
+      c.fillText('小流氓', w / 2, 38);
+      // a crude cover drawing: a figure and an explosion
+      c.fillStyle = '#2a2a2a';
+      c.beginPath(); c.arc(w * 0.34, 96, 15, 0, 7); c.fill();
+      c.fillRect(w * 0.34 - 13, 110, 26, 34);
+      c.fillStyle = '#e8862f';
+      c.beginPath(); c.arc(w * 0.70, 104, 22, 0, 7); c.fill();
+      c.fillStyle = '#f2e6d0';
+      for (var k = 0; k < 8; k++) {
+        var a = k * 0.785;
+        c.beginPath(); c.arc(w * 0.70 + Math.cos(a) * 26, 104 + Math.sin(a) * 26, 4, 0, 7); c.fill();
+      }
+      c.fillStyle = '#c8342b'; c.font = 'bold 11px serif';
+      c.fillText('第 88 期', w / 2, h - 10);
+    }), 0, 0.100, 0.0075));                                            // front cover
+    g.add(box(0.004, 0.196, 0.020, M(0xd8b83a, 0.8), -0.073, 0.098, 0.002)); // spine
+    for (var s2 = 0; s2 < 2; s2++) {                                   // staples
+      g.add(box(0.014, 0.0025, 0.0015, M(0xb0b0b8, 0.4, 0.7), -0.060, 0.052 + s2 * 0.092, 0.0095));
+    }
     return g;
   };
   B.digitalWatch = function () {
     var g = new THREE.Group();
-    g.add(box(0.055, 0.045, 0.014, M(0x1a1a1a, 0.5, 0.3), 0, 0.024, 0));
-    g.add(box(0.042, 0.024, 0.002, M(0x3d4a3a, 0.2), 0, 0.028, 0.008));
-    g.add(box(0.03, 0.014, 0.001, plateTex(48, 24, function (c, w, h) {
-      c.fillStyle = '#12281a'; c.fillRect(0, 0, w, h);
-      c.fillStyle = '#7ee787'; c.font = 'bold 12px monospace'; c.fillText('88:88', 2, 15);
-    }), 0, 0.028, 0.0095));
-    for (var i = 0; i < 2; i++) {
-      g.add(box(0.012, 0.09, 0.006, M(0x2a2a2a, 0.7), 0, 0.024, -0.05 + i * 0.10));
+    /* A 電子錶 is a strap with a module clipped to it. The old builder put two
+     * upright bars either side of the case, which read as a buckle, not a
+     * wrist. Lay the strap flat and let the module sit proud of it.
+     */
+    var case_ = M(0x1e1e22, 0.42, 0.35), strap = M(0x2a2a30, 0.72), glass = M(0x2a3a2e, 0.16);
+    g.add(box(0.052, 0.034, 0.013, case_, 0, 0.017, 0));              // module body
+    g.add(box(0.040, 0.021, 0.003, glass, 0, 0.018, 0.0068));         // window
+    g.add(box(0.030, 0.013, 0.0015, plateTex(64, 32, function (c, w, h) {
+      c.fillStyle = '#0e2014'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#7ee787'; c.font = 'bold 13px monospace'; c.textAlign = 'center';
+      c.fillText('18:88', w / 2, 16);
+      c.font = '7px monospace'; c.fillStyle = '#4a9a52';
+      c.fillText('THU 8', w / 2, 27);
+    }), 0, 0.018, 0.0078));
+    g.add(box(0.012, 0.006, 0.004, M(0x3a3a44, 0.55), -0.016, 0.0065, 0.0068)); // button
+    // a short strap keeps the module dominant; laid out long it read as a
+    // stick with a lump on it, because the module is only 13 mm thick
+    for (var s2 = -1; s2 <= 1; s2 += 2) {
+      var len = 0.030;
+      var st = box(0.026, 0.005, len, strap, 0, 0.012, s2 * (len / 2 + 0.014));
+      st.rotation.x = s2 * 0.16;
+      g.add(st);
+      g.add(box(0.028, 0.0014, 0.0035, M(0x1a1a1e, 0.75),
+        0, 0.0148, s2 * 0.020));                                       // keeper
     }
     return g;
   };
@@ -315,14 +483,34 @@
   // ═══ 1997 ═══
   B.kaiTakPlane = function () {
     var g = new THREE.Group();
-    g.add(cyl(0.028, 0.028, 0.19, 10, M(0xe8e8ea, 0.5), 0, 0.085, 0));
-    g.add(cyl(0.016, 0.028, 0.045, 10, M(0xe8e8ea, 0.5), 0, 0.112, 0.105));
-    g.add(box(0.26, 0.008, 0.05, M(0xd8d8dc, 0.5), 0, 0.075, -0.01));
-    g.add(box(0.075, 0.045, 0.008, M(0xd8d8dc, 0.5), 0, 0.11, -0.095));
-    for (var i = 0; i < 2; i++) {
-      g.add(cyl(0.021, 0.021, 0.035, 8, M(0x3a3a40, 0.6), -0.075 + i * 0.15, 0.062, -0.03));
+    /* The old builder laid the fuselage along Y, so the aeroplane stood on its
+     * tail like a chimney -- the single worst silhouette in the museum. A
+     * plane has to be long, low and pointed, banking towards the rooftops.
+     */
+    var hull = M(0xe8e8ea, 0.45), wing = M(0xdcdce2, 0.5);
+    var fus = cyl(0.030, 0.016, 0.20, 14, hull, 0, 0.0, 0);
+    fus.rotation.x = Math.PI / 2;                 // lie the fuselage down
+    fus.position.set(0, 0.062, -0.01);
+    g.add(fus);
+    var nose = sph(0.030, hull, 0, 0.062, 0.090, 14);
+    nose.scale.set(1, 1, 1.25); g.add(nose);
+    g.add(box(0.26, 0.007, 0.055, wing, 0, 0.060, 0.006));      // main wing
+    var dih = box(0.26, 0.005, 0.030, wing, 0, 0.070, 0.030);
+    dih.rotation.x = -0.12; g.add(dih);                          // wing box
+    g.add(box(0.018, 0.010, 0.028, wing, -0.128, 0.058, 0.012)); // wingtip fins
+    g.add(box(0.018, 0.010, 0.028, wing, 0.128, 0.058, 0.012));
+    g.add(box(0.075, 0.042, 0.006, wing, 0, 0.092, -0.088));     // tail fin
+    g.add(box(0.115, 0.006, 0.032, wing, 0, 0.062, -0.092));     // tailplane
+    for (var s2 = -1; s2 <= 1; s2 += 2) {                        // engines
+      var e = cyl(0.014, 0.014, 0.042, 12, M(0xb8b8c0, 0.45), s2 * 0.070, 0.046, 0.004);
+      e.rotation.x = Math.PI / 2; g.add(e);
     }
-    g.add(box(0.10, 0.006, 0.006, M(0xc8342b, 0.6), 0, 0.10, 0.08));
+    // the red cheatline that made 啟德 arrivals recognisable
+    var stripe = cyl(0.0305, 0.0305, 0.115, 14, M(0xc8342b, 0.55), 0, 0.062, -0.052);
+    stripe.rotation.x = Math.PI / 2; g.add(stripe);
+    var stand = cyl(0.036, 0.044, 0.016, 16, M(0x2a2a30, 0.6), 0, 0.008, -0.01);
+    g.add(stand);
+    g.add(cyl(0.006, 0.006, 0.040, 8, M(0x8a8a92, 0.4, 0.5), 0, 0.032, -0.01));
     return g;
   };
   B.emigrationCase = function () {
@@ -352,9 +540,23 @@
   };
   B.arcadeToken = function () {
     var g = new THREE.Group();
-    g.add(cyl(0.036, 0.036, 0.006, 16, M(0xb8a04a, 0.4, 0.8), 0, 0.003, 0));
-    g.add(cyl(0.028, 0.028, 0.002, 16, M(0x8a7020, 0.5, 0.7), 0, 0.0045, 0));
-    g.add(box(0.03, 0.001, 0.001, M(GOLD, 0.4, 0.7), 0, 0.006, 0.01));
+    // A token reads by its edge, not its face: milled rim, raised inner
+    // field so the light catches two rings, and a punched star.
+    var brass = M(0xb8a04a, 0.34, 0.85);
+    g.add(cyl(0.036, 0.036, 0.0075, 22, brass, 0, 0.00375, 0));
+    g.add(tor(0.0338, 0.0022, M(0xd8c06a, 0.28, 0.9), 0, 0.0075, 0, Math.PI / 2));
+    g.add(cyl(0.027, 0.027, 0.0012, 22, M(0x8a7020, 0.42, 0.75), 0, 0.0081, 0));
+    g.add(tor(0.0205, 0.0016, M(0xd8c06a, 0.30, 0.88), 0, 0.0089, 0, Math.PI / 2));
+    for (var i = 0; i < 26; i++) {                        // milled edge
+      var a = i * Math.PI * 2 / 26;
+      g.add(box(0.0016, 0.0060, 0.0016, M(0x9a8438, 0.45, 0.8),
+        Math.cos(a) * 0.0354, 0.00375, Math.sin(a) * 0.0354));
+    }
+    for (var k = 0; k < 5; k++) {                         // punched star
+      var sa = k * Math.PI * 2 / 5 - Math.PI / 2;
+      g.add(box(0.0055, 0.0009, 0.0055, M(0x6b5618, 0.5, 0.7),
+        Math.cos(sa) * 0.008, 0.0088, Math.sin(sa) * 0.008));
+    }
     return g;
   };
   B.yesCard = function () {
@@ -386,13 +588,21 @@
   };
   B.pager = function () {
     var g = new THREE.Group();
-    g.add(box(0.05, 0.07, 0.016, M(0x1a1a1e, 0.55, 0.2), 0, 0.035, 0));
-    g.add(box(0.04, 0.022, 0.002, M(0x3d4a3a, 0.25), 0, 0.045, 0.009));
-    g.add(box(0.03, 0.012, 0.001, plateTex(48, 16, function (c, w, h) {
-      c.fillStyle = '#0f1f14'; c.fillRect(0, 0, w, h);
-      c.fillStyle = '#7ee787'; c.font = 'bold 10px monospace'; c.fillText('2888', 2, 12);
-    }), 0, 0.045, 0.0105));
-    g.add(box(0.05, 0.004, 0.016, M(0x8a8a8a, 0.4, 0.5), 0, 0.072, 0));
+    // The beeper is a clip-on box with a screen on one end, not a remote
+    // control: the clip is the silhouette that identifies it.
+    g.add(box(0.048, 0.030, 0.084, M(0x1e1e24, 0.5), 0, 0.015, 0));           // body
+    g.add(box(0.048, 0.006, 0.086, M(0x14141a, 0.6), 0, 0.033, 0));           // top shell
+    g.add(box(0.034, 0.004, 0.024, M(0x0d0d12, 0.3), 0, 0.0345, 0.026));      // screen
+    g.add(box(0.030, 0.002, 0.018, plateTex(64, 40, function (c, w, h) {
+      c.fillStyle = '#0d1a0d'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#6fdc7a'; c.font = 'bold 13px monospace'; c.textAlign = 'center';
+      c.fillText('998', w / 2, 16);
+      c.font = '7px monospace'; c.fillStyle = '#4a9a52';
+      c.fillText('CALL', w / 2, 30);
+    }), 0, 0.0363, 0.026));                                                  // LCD
+    g.add(box(0.010, 0.004, 0.004, M(0x3a3a44, 0.5), -0.012, 0.0355, 0.044)); // button
+    g.add(box(0.046, 0.040, 0.006, M(0x2a2a32, 0.55), 0, 0.018, -0.044));      // clip back
+    g.add(box(0.046, 0.008, 0.030, M(0x2a2a32, 0.55), 0, 0.040, -0.030));      // clip arm
     return g;
   };
   B.octopus = function () {
@@ -421,14 +631,38 @@
   // ═══ 2003 ═══
   B.starFerryClock = function () {
     var g = new THREE.Group();
-    g.add(box(0.10, 0.10, 0.10, M(0xe8e0cc, 0.8), 0, 0.05, 0));
-    g.add(box(0.07, 0.10, 0.07, M(0xe8e0cc, 0.8), 0, 0.15, 0));
-    g.add(cyl(0.065, 0.065, 0.006, 16, M(0xf2ece0, 0.6), 0, 0.15, 0.082));
-    g.add(cyl(0.052, 0.052, 0.002, 16, M(0x1a1a1a, 0.4), 0, 0.15, 0.086));
-    g.add(box(0.004, 0.040, 0.002, M(0xc8342b, 0.4), 0, 0.168, 0.088));
-    g.add(box(0.030, 0.004, 0.002, M(0x1a1a1a, 0.4), 0.012, 0.150, 0.088));
-    g.add(cone(0.035, 0.05, 4, M(0x2f6b3d, 0.7), 0, 0.26, 0));
-    g.add(box(0.12, 0.012, 0.12, M(0x2f6b3d, 0.7), 0, 0.208, 0));
+    /* The old one was a stack of two cubes -- a chair, not a tower. The
+     * 尖沙咀 clock tower is tapered, has a clock on every face, and was the
+     * thing everyone used to meet under, so the dials are the point.
+     */
+    var stone = M(0xe6ddc6, 0.82), stoneDark = M(0xd2c8ae, 0.85);
+    g.add(box(0.112, 0.014, 0.112, stoneDark, 0, 0.007, 0));          // plinth
+    g.add(box(0.096, 0.020, 0.096, stone, 0, 0.024, 0));             // base moulding
+    g.add(box(0.084, 0.116, 0.084, stone, 0, 0.092, 0));             // shaft
+    g.add(box(0.070, 0.030, 0.070, stoneDark, 0, 0.165, 0));          // string course
+    g.add(box(0.062, 0.020, 0.062, stone, 0, 0.190, 0));             // gallery
+    // four clock faces, each a disc with hands, on every side
+    for (var f = 0; f < 4; f++) {
+      var a = f * Math.PI / 2;
+      var face = cyl(0.026, 0.026, 0.004, 18, M(0xf6f2e6, 0.5), Math.sin(a) * 0.031, 0.190, Math.cos(a) * 0.031);
+      face.rotation.x = Math.PI / 2;
+      face.rotation.z = -a;
+      g.add(face);
+      g.add(box(0.0015, 0.014, 0.002, M(0x1a1a1a, 0.5),
+        Math.sin(a) * 0.0334, 0.196, Math.cos(a) * 0.0334));
+      g.add(box(0.010, 0.0015, 0.002, M(0x1a1a1a, 0.5),
+        Math.sin(a) * 0.0334, 0.190, Math.cos(a) * 0.0334));
+    }
+    // the copper cupola and its finial
+    g.add(cone(0.046, 0.040, 8, M(0x3f7a52, 0.55, 0.35), 0, 0.222, 0));
+    g.add(cyl(0.004, 0.004, 0.020, 8, M(0xb8a04a, 0.4, 0.7), 0, 0.252, 0));
+    g.add(sph(0.0055, M(0xb8a04a, 0.35, 0.8), 0, 0.264, 0, 10));
+    // corner brackets, so the shaft reads as stone rather than a box
+    for (var c2 = 0; c2 < 4; c2++) {
+      var ca = c2 * Math.PI / 2 + Math.PI / 4;
+      g.add(box(0.012, 0.100, 0.012, stoneDark,
+        Math.sin(ca) * 0.036, 0.092, Math.cos(ca) * 0.036));
+    }
     return g;
   };
   B.disneyCastle = function () {
@@ -458,10 +692,21 @@
   };
   B.mask = function () {
     var g = new THREE.Group();
-    g.add(box(0.075, 0.05, 0.025, M(0xe8f0f5, 0.85), 0, 0.025, 0));
-    g.add(box(0.07, 0.008, 0.026, M(0xc8d8e0, 0.85), 0, 0.045, 0));
-    g.add(box(0.004, 0.05, 0.004, M(0xd8e4ea, 0.85), -0.038, 0.03, -0.02));
-    g.add(box(0.004, 0.05, 0.004, M(0xd8e4ea, 0.85), 0.038, 0.03, -0.02));
+    // A surgical mask is a stack of pleats, not a block: alternating strips
+    // with a slight offset is what makes it read at thumbnail size.
+    var cloth = M(0xeaf2f7, 0.88), shade = M(0xd6e2ea, 0.88);
+    for (var i = 0; i < 5; i++) {
+      var t = i / 4;
+      g.add(box(0.082 - t * 0.010, 0.0125, 0.022 + t * 0.004,
+        i % 2 ? shade : cloth, 0, 0.0075 + i * 0.0125, -t * 0.002));
+    }
+    g.add(box(0.080, 0.0035, 0.024, M(0xc2d2dc, 0.9), 0, 0.0500, -0.002));   // top hem
+    g.add(box(0.070, 0.0022, 0.0028, M(0xb0bcc4, 0.5, 0.2), 0, 0.0350, 0.0125)); // nose wire
+    for (var s2 = -1; s2 <= 1; s2 += 2) {                                     // ear loops
+      var loop = tor(0.019, 0.0016, M(0xe4e9ec, 0.9), s2 * 0.042, 0.029, -0.004, 0);
+      loop.rotation.y = s2 * 0.55;
+      g.add(loop);
+    }
     return g;
   };
   B.flipPhone = function () {
@@ -574,10 +819,27 @@
   };
   B.smartphone = function () {
     var g = new THREE.Group();
-    g.add(box(0.05, 0.10, 0.008, M(0x1a1a1e, 0.4, 0.4), 0, 0.05, 0));
-    g.add(box(0.042, 0.086, 0.002, M(0x1d3a5c, 0.2), 0, 0.05, 0.0045));
-    g.add(box(0.03, 0.004, 0.001, M(0x7ee787, 0.5), 0, 0.08, 0.0055));
-    g.add(box(0.02, 0.004, 0.001, M(0xf2f2f2, 0.5), 0, 0.068, 0.0055));
+    // A slab needs its bezel, its cam bump and a screen that is actually
+    // doing something, or it is indistinguishable from a novelty card.
+    g.add(box(0.052, 0.104, 0.009, M(0x1a1a1e, 0.35, 0.45), 0, 0.052, 0));
+    g.add(box(0.0485, 0.0975, 0.0095, M(0x141418, 0.40, 0.40), 0, 0.052, 0));
+    g.add(box(0.0435, 0.089, 0.0015, plateTex(96, 192, function (c, w, h) {
+      var grd = c.createLinearGradient(0, 0, w, h);
+      grd.addColorStop(0, '#12324f'); grd.addColorStop(1, '#2a6a8c');
+      c.fillStyle = grd; c.fillRect(0, 0, w, h);
+      c.fillStyle = 'rgba(255,255,255,.72)';           // message bubbles
+      c.fillRect(9, 26, 44, 11); c.fillRect(9, 42, 34, 11);
+      c.fillStyle = 'rgba(126,231,135,.85)';
+      c.fillRect(40, 62, 46, 11); c.fillRect(52, 78, 34, 11);
+      c.fillStyle = 'rgba(255,255,255,.5)';
+      c.fillRect(0, 0, w, 12); c.fillRect(0, h - 14, w, 14);
+      c.fillStyle = '#fff'; c.font = 'bold 9px sans-serif'; c.textAlign = 'center';
+      c.fillText('6:42', w / 2, 9);
+    }), 0, 0.052, 0.0052));
+    g.add(box(0.0525, 0.0105, 0.0092, M(0x141418, 0.40, 0.40), 0, 0.0052, 0));  // chin
+    g.add(box(0.014, 0.0016, 0.0022, M(0x2a2a30, 0.6), 0, 0.1025, 0.0048));    // earpiece
+    g.add(box(0.013, 0.013, 0.0035, M(0x0e0e12, 0.35), -0.012, 0.096, -0.0056)); // cam bump
+    g.add(sph(0.0038, M(0x1e2a3a, 0.12, 0.85), -0.012, 0.096, -0.0074, 12));     // lens
     return g;
   };
   B.taobaoParcel = function () {
@@ -594,11 +856,25 @@
   };
   B.lightStick = function () {
     var g = new THREE.Group();
-    g.add(cyl(0.012, 0.014, 0.16, 8, M(0x2a2a2e, 0.6), 0, 0.08, 0));
-    g.add(sph(0.028, new THREE.MeshStandardMaterial({
-      color: 0xff8fc8, emissive: 0xff4d9d, emissiveIntensity: 1.5, roughness: 0.4
-    }), 0, 0.175, 0, 10));
-    g.add(cyl(0.014, 0.014, 0.012, 8, M(0x8a8a90, 0.4, 0.5), 0, 0.008, 0));
+    // A concert light stick is mostly glow: the tube has to be a lit cylinder
+    // and the handle has to read as something a hand holds.
+    var glow = new THREE.MeshStandardMaterial({
+      color: 0xff9fd4, emissive: 0xff4d9d, emissiveIntensity: 1.9,
+      roughness: 0.35, transparent: true, opacity: 0.92
+    });
+    var glowSoft = new THREE.MeshStandardMaterial({
+      color: 0xffc4e2, emissive: 0xff6fb2, emissiveIntensity: 0.9,
+      roughness: 0.5, transparent: true, opacity: 0.34, depthWrite: false
+    });
+    g.add(cyl(0.0165, 0.0180, 0.085, 18, M(0x2a2a30, 0.55), 0, 0.0425, 0));  // grip
+    for (var r = 0; r < 6; r++) {                                            // grip ribs
+      g.add(tor(0.0172, 0.0011, M(0x3e3e46, 0.5), 0, 0.020 + r * 0.011, 0, Math.PI / 2));
+    }
+    g.add(cyl(0.0195, 0.0175, 0.012, 18, M(0x8a8a92, 0.35, 0.55), 0, 0.091, 0)); // collar
+    g.add(cyl(0.0180, 0.0180, 0.078, 20, glow, 0, 0.136, 0));                 // lit tube
+    g.add(cyl(0.0205, 0.0185, 0.075, 20, glowSoft, 0, 0.136, 0));             // halo
+    g.add(cyl(0.0180, 0.0165, 0.010, 20, M(0xf2d6e8, 0.4), 0, 0.180, 0));     // cap
+    g.add(cyl(0.0130, 0.0110, 0.006, 14, M(0x2a2a30, 0.6), 0, 0.006, 0));     // base
     return g;
   };
   B.sharedBike = function () {
@@ -682,18 +958,49 @@
   };
   B.mask2 = function () {
     var g = new THREE.Group();
-    g.add(box(0.075, 0.05, 0.025, M(0xc9a2cc, 0.85), 0, 0.025, 0));
-    g.add(box(0.07, 0.008, 0.026, M(0xa87fa8, 0.85), 0, 0.045, 0));
-    g.add(box(0.004, 0.05, 0.004, M(0xb890b8, 0.85), -0.038, 0.03, -0.02));
-    g.add(box(0.004, 0.05, 0.004, M(0xb890b8, 0.85), 0.038, 0.03, -0.02));
+    // Same object, a different colourway -- it is the 2020 one where the mask
+    // stopped being white. Pleats again, so it is the same object family.
+    var cloth = M(0x9fc9e8, 0.88), shade = M(0x8ab8da, 0.88);
+    for (var i = 0; i < 5; i++) {
+      var t = i / 4;
+      g.add(box(0.082 - t * 0.010, 0.0125, 0.022 + t * 0.004,
+        i % 2 ? shade : cloth, 0, 0.0075 + i * 0.0125, -t * 0.002));
+    }
+    g.add(box(0.080, 0.0035, 0.024, M(0x86b0d0, 0.9), 0, 0.0500, -0.002));
+    g.add(box(0.070, 0.0022, 0.0028, M(0xb0bcc4, 0.5, 0.2), 0, 0.0350, 0.0125));
+    // a colour print, which is the only thing that distinguishes this era
+    g.add(box(0.030, 0.020, 0.0015, plateTex(48, 32, function (c, w, h) {
+      c.fillStyle = 'rgba(0,0,0,0)'; c.clearRect(0, 0, w, h);
+      c.fillStyle = '#f2e6d0';
+      for (var p = 0; p < 4; p++) {
+        c.beginPath(); c.arc(10 + p * 9, 12, 4.5, 0, 7); c.fill();
+      }
+      c.strokeStyle = '#c8342b'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(6, 22); c.lineTo(40, 22); c.stroke();
+    }), 0, 0.0295, 0.0130));
+    for (var s2 = -1; s2 <= 1; s2 += 2) {
+      var loop = tor(0.019, 0.0016, M(0xe4e9ec, 0.9), s2 * 0.042, 0.029, -0.004, 0);
+      loop.rotation.y = s2 * 0.55;
+      g.add(loop);
+    }
     return g;
   };
   B.ratTest = function () {
     var g = new THREE.Group();
-    g.add(box(0.10, 0.016, 0.026, M(0xf2f2f2, 0.7), 0, 0.008, 0));
-    g.add(box(0.02, 0.004, 0.028, M(0xd8d8d8, 0.7), -0.056, 0.008, 0));
-    g.add(box(0.012, 0.002, 0.010, M(0xc8342b, 0.5), 0.03, 0.017, 0));
-    g.add(box(0.012, 0.002, 0.010, M(0xc8342b, 0.5), 0.03, 0.017, 0.012));
+    // A reagent strip in its cassette: white body, the sample well, and the
+    // two windows the result appears in. A plain bar reads as a stick.
+    g.add(box(0.104, 0.014, 0.028, M(0xf4f4f6, 0.82), 0, 0.007, 0));
+    g.add(box(0.104, 0.003, 0.030, M(0xe2e2e6, 0.85), 0, 0.0155, 0));         // lid
+    g.add(cyl(0.0055, 0.0055, 0.004, 14, M(0xd0d0d8, 0.7), -0.030, 0.0175, 0)); // sample well
+    g.add(box(0.010, 0.002, 0.009, M(0xc8342b, 0.45), 0.020, 0.0176, 0));      // C line
+    g.add(box(0.010, 0.002, 0.009, M(0xd0d0d8, 0.6), 0.020, 0.0176, 0.012));   // T window (blank)
+    g.add(box(0.100, 0.012, 0.0015, plateTex(96, 14, function (c, w, h) {
+      c.fillStyle = '#f4f4f6'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#8a8a92'; c.font = 'bold 7px sans-serif';
+      c.fillText('COVID-19 Ag', 4, 10);
+      c.fillStyle = '#c8342b'; c.fillRect(w - 26, 4, 20, 2);
+      c.fillRect(w - 26, 8, 13, 2);
+    }), 0, 0.007, 0.0145));
     return g;
   };
   B.homeReturnCard = function () {
@@ -1756,10 +2063,35 @@ R.room = function () { return roomGroup; };
       thumbScene.add(rim2);
       if (envMap) { thumbScene.environment = envMap; thumbScene.environmentIntensity = 0.55; }
     }
-    var g = R.buildProp(id);
-    var def = G.CONTENT.PROPS[id];
-    var target = def && def.radius ? def.radius : 0.11;
-    g.scale.setScalar(0.13 / target);
+    var g;
+    try {
+      g = R.buildProp(id);
+    } catch (err) {
+      // one broken builder must not take the museum with it: fall back to a
+      // marker shape and say so once, so the gap is visible rather than silent
+      if (G.__propErrors) G.__propErrors.push(id + ': ' + (err && err.message));
+      else G.__propErrors = [id + ': ' + (err && err.message)];
+      g = new THREE.Group();
+      g.add(box(0.10, 0.10, 0.10, M(0x8f2b24, 0.6), 0, 0.05, 0));
+    }
+    /* Frame by the model's own bounds. Nominal radius told a flat comic
+     * cover and a marble the same thing, so covers overflowed the cell and
+     * the small objects sat marooned in it. One box per prop is cheap and it
+     * makes the museum grid read as a grid.
+     */
+    var bb = new THREE.Box3().setFromObject(g);
+    if (!bb.isEmpty()) {
+      var size = new THREE.Vector3(), ctr = new THREE.Vector3();
+      bb.getSize(size); bb.getCenter(ctr);
+      var span = Math.max(size.x, size.y, size.z * 1.3, 0.001);
+      g.scale.setScalar(0.145 / span);
+      // re-measure after scaling so the object is centred, not its origin
+      bb.setFromObject(g);
+      bb.getCenter(ctr);
+      g.position.x -= ctr.x;
+      g.position.z -= ctr.z;
+      g.position.y -= bb.min.y;
+    }
     thumbScene.add(g);
     thumbRenderer.render(thumbScene, thumbCam);
     var url = thumbRenderer.domElement.toDataURL('image/png');
