@@ -93,8 +93,44 @@
     setTimeout(function () { blip(880, 0.22, 'triangle', 0.05); }, 80);
     setTimeout(function () { blip(1180, 0.30, 'triangle', 0.045); }, 170);
   }
+  // The upper deck is the part a new player cannot see the point of: a coin
+  // riding it makes no money. Give the cascade a small dry tick so the deck
+  // is audibly alive, and the drop that follows reads as an answer to it.
+  function ping() {
+    var ac = audio(); if (!ac) return;
+    var n = ac.createBufferSource();
+    var len = Math.max(1, Math.floor(ac.sampleRate * 0.045));
+    var buf = ac.createBuffer(1, len, ac.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 5);
+    n.buffer = buf;
+    var bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1200 + Math.random() * 600; bp.Q.value = 6;
+    var g = ac.createGain(); g.gain.value = 0.055;
+    n.connect(bp); bp.connect(g); g.connect(ac.destination);
+    n.start();
+  }
+  // The prize moment gets a body, not just a chime: a low tone under the
+  // sparkle, because the collection card is the loudest thing in the game.
+  function boom() {
+    var ac = audio(); if (!ac) return;
+    var o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(196, ac.currentTime);
+    o.frequency.exponentialRampToValueAtTime(64, ac.currentTime + 0.42);
+    g.gain.setValueAtTime(0.0001, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.16, ac.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.55);
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.6);
+  }
   UI.clink = clink; UI.rumble = rumble; UI.chime = chime;
-  UI.setMuted = function (v) { muted = v; };
+  UI.shuttlePing = ping; UI.boom = boom;
+  // One mute path. UI.setMuted() used to assign the flag behind the switch's
+  // back, leaving the UI painting the opposite of the truth; it now goes
+  // through exactly the same commit the switch does.
+  UI.setMuted = function (v) { commitMuted(!!v); };
 
   // ── 故事線 ───────────────────────────────────────────────────────────
   // CONTENT.STORY is optional: a build without it simply never shows a story.
@@ -254,6 +290,8 @@
     els.done = $('done');
     els.start = $('start');
     els.live = $('live');
+    els.settings = $('settings');
+    els.settingsScroll = $('settingsScroll');
 
     $('museumBtn').onclick = function () { UI.openMuseum(); };
     // 返去 walks back one level, exactly like Escape.
@@ -266,12 +304,20 @@
     if ($('mtabStory')) $('mtabStory').onclick = function () { setStoryTab(true); };
     $('mdBack').onclick = function () { UI.closeMuseumDetail(); };
     $('cardClose').onclick = function () { UI.closeCard(); };
-    $('soundBtn').onclick = function () {
-      muted = !muted;
-      this.textContent = muted ? '♪ 關' : '♪ 開';
-      this.setAttribute('aria-label', muted ? '開聲' : '靜音');
-    };
     $('slapBtn').onclick = function () { if (UI.onSlap) UI.onSlap(); };
+
+    // ── settings ─────────────────────────────────────────────────────────
+    // The sound switch and the reset button live here now, so the main screen
+    // keeps exactly three controls: 博物館 / 設定 / 拍機.
+    $('settingsBtn').onclick = function () { UI.openSettings(); };
+    $('settingsClose').onclick = function () { UI.closeSettings(); };
+    $('soundToggle').onclick = function () { UI.toggleMuted(); };
+    $('settingsReset').onclick = function () { armReset(); };
+    els.settings.onclick = function (e) {
+      if (e.target !== els.settings) return;
+      UI.closeSettings();
+    };
+
     $('sGo').onclick = function () {
       audio();                                  // must be inside the gesture
       els.start.classList.add('off');
@@ -306,6 +352,7 @@
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
       if (els.card.classList.contains('on')) { UI.closeCard(); return; }
+      if (els.settings.classList.contains('on')) { e.preventDefault(); UI.closeSettings(); return; }
       if (!els.museum.classList.contains('on')) return;
       e.preventDefault();
       if (state.mdOpen) UI.closeMuseumDetail();
@@ -407,22 +454,96 @@
     el.textContent = got + ' / ' + all.length;
   };
 
+  // A roll-up animation outlives the state it was started from: if the wallet
+  // is rewritten mid-animation (重置進度), the tail of the old animation would
+  // paint the old number back over the new one. Every writer bumps the token.
+  var tickToken = 0;
+
   UI.setCoins = function (n) {
+    tickToken++;
     state.coins = n;
     els.coins.textContent = n;
+    combo.n = 0;
+    paintCombo();
+  };
+
+  // The wallet is the only number the player acts on, so every reason it
+  // changed has to be visible: the counter rolls up, and the plate takes one
+  // short scale hit. The roll says "it went up"; the hit says "look here".
+  function nudgeCoins() {
+    var box = $('coinBox');
+    if (!box) return;
+    box.classList.remove('tick');
+    void box.offsetWidth;
+    box.classList.add('tick');
+    clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(function () { box.classList.remove('tick'); }, 360);
+  }
+  var nudgeTimer = 0;
+
+  // ── 連出 ───────────────────────────────────────────────────────────────
+  // Payouts arrive in bursts while the plate sweeps, and a burst used to look
+  // exactly like a single payout that happened to be worth more. Counting the
+  // streak out loud gives the sweep a beginning and an end, which is the whole
+  // reason a pusher feels good.
+  var combo = { n: 0, t: 0, timer: 0 };
+  var COMBO_HOLD_MS = 1500;
+
+  function paintCombo() {
+    var el = $('combo');
+    if (!el) return;
+    if (combo.n >= 2) {
+      el.hidden = false;
+      el.textContent = '×' + combo.n;
+      // restart the entrance so the 3rd, 4th, 12th each read as a new one
+      el.style.animation = 'none';
+      void el.offsetWidth;
+      el.style.animation = '';
+    } else {
+      el.hidden = true;
+      el.textContent = '';
+    }
+  }
+
+  UI.coinPaid = function () {
+    var now = performance.now();
+    combo.n = (now - combo.t > COMBO_HOLD_MS) ? 1 : combo.n + 1;
+    combo.t = now;
+    paintCombo();
+    nudgeCoins();
+    if (combo.timer) clearTimeout(combo.timer);
+    combo.timer = setTimeout(function () { combo.n = 0; paintCombo(); }, COMBO_HOLD_MS + 120);
+    return combo.n;
   };
 
   UI.tick = function (n) {
     // roll the counter up so a payout reads as a payout
     var from = state.coins, to = n, t0 = performance.now();
     if (from === to) return;
+    var token = ++tickToken;
     (function anim() {
+      if (token !== tickToken) return;
       var k = Math.min(1, (performance.now() - t0) / 280);
       var v = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 2)));
       els.coins.textContent = v;
       if (k < 1) requestAnimationFrame(anim);
       else { state.coins = to; els.coins.textContent = to; }
     })();
+  };
+
+  // ── 上層 N 枚 ──────────────────────────────────────────────────────────
+  // Same contract as paintSlap(): write the DOM only when the number actually
+  // changed, so polling it every few frames costs nothing.
+  var topPileShown = -1;
+  UI.setTopPile = function (n) {
+    var el = $('topPile');
+    if (!el) return;
+    var v = Math.max(0, Math.round(n || 0));
+    if (v === topPileShown) return;
+    topPileShown = v;
+    if (v <= 0) { el.hidden = true; return; }
+    el.hidden = false;
+    el.innerHTML = '上層 <b>' + v + '</b> 枚';
   };
 
   // ── the machine speaks ─────────────────────────────────────────────────
@@ -452,7 +573,8 @@
     if (!def) return;
     state.cardOpen = true;
     state.onCardClose = onClose || null;
-    if (!state.collected[propId]) {
+    var isNew = !state.collected[propId];
+    if (isNew) {
       state.collected[propId] = true;
       state.found.push(propId);
       var chip = els.bigRow.querySelector('[data-id="' + propId + '"]');
@@ -473,8 +595,20 @@
     $('cardOwner').textContent = owner ? ('屬於 ' + owner.name + ' · ' + owner.note) : '冇人認領';
     $('cardMem').innerHTML = def.mem || '';
     try { $('cardImg').src = G.R.thumb(propId); } catch (e) { $('cardImg').removeAttribute('src'); }
+    // A prize is the one moment allowed to interrupt: the card slides up, the
+    // room shakes once, a low tone lands under the chime, and the ribbon says
+    // what just happened in three characters.
+    var tag = $('cardTag');
+    if (tag) {
+      tag.classList.remove('pop');
+      void tag.offsetWidth;
+      tag.classList.add('pop');
+      txt(tag, isNew ? '新收藏' : '再攞一次');
+    }
     els.card.classList.add('on');
     chime();
+    boom();
+    if (G.R && G.R.shake) G.R.shake(0.020, 280);
   };
 
   UI.closeCard = function () {
@@ -665,9 +799,139 @@
   };
   UI.isMuseumOpen = function () { return els.museum.classList.contains('on'); };
 
-  // While the museum is up it is the only thing on screen, so the HUD, the
+  // ── settings ───────────────────────────────────────────────────────────
+  // Same overlay family as the museum (#settings is a .ov), same inert +
+  // focus contract. Nothing here invents a second modal system: the page is
+  // one .ovHead + one .ovBody, and Esc / backdrop / 返去 all exit it.
+  var RESET_ARM_MS = 3000;
+  var resetArmTimer = 0;
+  var resetArmed = false;
+
+  UI.isMuted = function () { return muted; };
+  // Sound is a player setting, so it is written through this one function:
+  // commit the flag, paint the switch, persist. Nothing else touches `muted`.
+  function commitMuted(v) {
+    var changed = (muted !== v);
+    muted = v;
+    paintSound();
+    if (changed) UI.save();
+    return muted;
+  }
+  UI.toggleMuted = function () {
+    commitMuted(!muted);
+    // Turning sound back on should be audible immediately, or the switch reads
+    // as broken; turning it off just goes quiet.
+    if (!muted) blip(520, 0.12, 'triangle', 0.05, 760);
+    return muted;
+  };
+
+  function paintSound() {
+    var b = $('soundToggle'), s = $('soundToggleState');
+    if (!b) return;
+    b.setAttribute('aria-checked', muted ? 'false' : 'true');
+    b.setAttribute('aria-label', muted ? '音效：關' : '音效：開');
+    txt(s, muted ? '關' : '開');
+  }
+
+  // The sentence above the button has to be true, so it is read from live
+  // state every time the page opens instead of being written once.
+  function ownedCount() {
+    var n = 0;
+    try {
+      var stages = (C && C.STAGES) || [];
+      stages.forEach(function (st) {
+        ((st.big || []).concat(st.small || [])).forEach(function (id) {
+          if (UI.state.collected[id]) n++;
+        });
+      });
+    } catch (e) { n = Object.keys(UI.state.collected || {}).length; }
+    return n;
+  }
+
+  function paintResetCopy() {
+    var props = ownedCount();
+    var coins = num(UI.state.coins, 0);
+    var what = $('resetWhat');
+    if (what) {
+      txt(what, '會冇咗：' + props + ' 件收藏、' + coins + ' 蚊、成條故事線。' +
+        '由 1972 年第一間舖重新開始，冇得返轉頭。');
+    }
+  }
+
+  function paintResetIdle() {
+    var b = $('settingsReset');
+    if (!b) return;
+    b.classList.remove('armed');
+    b.setAttribute('aria-label', '重置進度');
+    txt(b, '重置進度');
+    txt($('resetHint'), '撳一次會問你，3 秒內再撳一次先會真係清。');
+  }
+
+  // Two-step: the first press only asks. If the second press does not land
+  // within 3 s the button goes back to its idle self on its own.
+  function disarmReset() {
+    if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = 0; }
+    resetArmed = false;
+    paintResetIdle();
+  }
+
+  function armReset() {
+    var b = $('settingsReset');
+    if (!b) return;
+    if (!resetArmed) {
+      resetArmed = true;
+      b.classList.add('armed');
+      b.setAttribute('aria-label', '真係重置？撳多次');
+      txt(b, '真係重置？撳多次');
+      txt($('resetHint'), '撳多次就會清走，3 秒之後自動取消。');
+      focusLater(b);
+      if (resetArmTimer) clearTimeout(resetArmTimer);
+      resetArmTimer = setTimeout(disarmReset, RESET_ARM_MS);
+      return;
+    }
+    // second press inside the window: this one is the real thing
+    if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = 0; }
+    resetArmed = false;
+    if (UI.onReset) UI.onReset();
+    // main.js owns the wipe; the page only re-reads what it now owns.
+    disarmReset();
+    paintResetCopy();
+    paintSound();
+    txt($('resetHint'), '搞好喇。由 1972 年第一間舖重新開始。');
+    UI.say('部機翻新咗。由頭嚟過。', 3600);
+  }
+
+  UI.openSettings = function () {
+    paintSound();
+    paintResetCopy();
+    disarmReset();
+    els.settings.classList.add('on');
+    setPageInert(true);
+    if (els.settingsScroll) els.settingsScroll.scrollTop = 0;
+    focusLater($('settingsClose'));
+  };
+
+  UI.closeSettings = function () {
+    if (!els.settings.classList.contains('on')) return;
+    disarmReset();
+    els.settings.classList.remove('on');
+    setPageInert(false);
+    if ($('settingsBtn')) focusLater($('settingsBtn'));
+  };
+  UI.isSettingsOpen = function () { return els.settings.classList.contains('on'); };
+
+  function activeOverlay() {
+    if (els.settings.classList.contains('on')) return els.settings;
+    if (els.museum.classList.contains('on')) return els.museum;
+    return null;
+  }
+
+  // While an overlay is up it is the only thing on screen, so the HUD, the
   // collect card and the other overlays must not be reachable by Tab or AT.
   // `inert` does that natively; the Tab wrap below covers older browsers.
+  // The overlay that is open is never in this list (it would inert itself);
+  // #museum and #settings are display:none while closed, so they are already
+  // unreachable without help.
   var INERT_ROOTS = ['hud', 'card', 'start', 'done'];
   function setPageInert(on) {
     INERT_ROOTS.forEach(function (id) {
@@ -689,8 +953,10 @@
     });
   }
   function trapTab(e) {
-    if (e.key !== 'Tab' || !els.museum.classList.contains('on')) return;
-    var list = focusables(els.museum);
+    if (e.key !== 'Tab') return;
+    var ov = activeOverlay();
+    if (!ov) return;
+    var list = focusables(ov);
     if (!list.length) return;
     var i = list.indexOf(document.activeElement);
     if (e.shiftKey && i <= 0) { e.preventDefault(); list[list.length - 1].focus(); }
@@ -705,7 +971,30 @@
   }
 
   // ── stage complete ─────────────────────────────────────────────────────
-  UI.showStageDone = function (stage, isLast) {
+  // A round has to end out loud. The player just cleared a decade, so the page
+  // says what the decade cost: what fell, what it paid, what was lost riding
+  // the upper deck, and what was collected on the way. The numbers are read
+  // from the sim's own stats, not recomputed here, so they cannot disagree
+  // with the game that produced them.
+  function paintDoneStats(stats) {
+    var box = $('doneStats');
+    if (!box) return;
+    if (!stats) { box.hidden = true; box.innerHTML = ''; return; }
+    var got = num(stats.got, 0), total = num(stats.total, 0);
+    var cells = [
+      { k: '跌出嚟', v: num(stats.drops, 0), cls: 'down' },
+      { k: '收得返', v: num(stats.paid, 0), cls: 'up' },
+      { k: '上層搬走', v: num(stats.lost, 0), cls: 'down' },
+      { k: '收藏', v: got + '/' + total, cls: 'up' }
+    ];
+    box.innerHTML = cells.map(function (c) {
+      return '<div class="dsCol ' + c.cls + '"><div class="dsV">' + c.v +
+        '</div><div class="dsK">' + c.k + '</div></div>';
+    }).join('');
+    box.hidden = false;
+  }
+
+  UI.showStageDone = function (stage, isLast, stats) {
     var yearEl = $('doneYear'), msgEl = $('doneMsg');
     var lineEl = $('doneLine'), beatEl = $('doneBeat');
     var s = story();
@@ -734,6 +1023,7 @@
         markSeen(stage);
       } else hide(beatEl);
     }
+    paintDoneStats(stats);
 
     $('doneNext').textContent = isLast ? '睇下機底' : '翻新部機';
     els.done.classList.add('on');
@@ -749,7 +1039,9 @@
     try {
       localStorage.setItem('yatmangai.save.v1', JSON.stringify({
         v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected,
-        seen: state.storySeen
+        seen: state.storySeen,
+        // a setting, not progress: 重置進度 must not switch the sound back on
+        muted: muted
       }));
     } catch (e) {}
   };
@@ -764,9 +1056,15 @@
       state.stageIdx = s.stageIdx || 0;
       state.coins = s.coins || 0;
       state.storySeen = (s.seen && typeof s.seen === 'object') ? s.seen : {};
+      // older saves have no `muted`; leave the default (on) in that case
+      if (typeof s.muted === 'boolean') muted = s.muted;
       return true;
     } catch (e) { return false; }
   };
+
+  // Paint the restored setting before anybody can open the page. boot() calls
+  // this right after UI.load(), so a silent save never shows 開 for a frame.
+  UI.paintSettings = function () { paintSound(); };
 
   G.UI = UI;
 })(window);

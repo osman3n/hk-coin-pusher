@@ -949,7 +949,10 @@ function buildRoom() {
   });
   var sign = new THREE.Mesh(new THREE.PlaneGeometry(0.30, 0.075),
     new THREE.MeshBasicMaterial({ map: signTex, transparent: true, opacity: 0.55 }));
-  sign.position.set(0.30, 0.34, -1.52);
+  // Sat left of the cabinet and low on the shutter: the top-centre band is
+  // where the coin counter lives, and a second piece of text there reads as
+  // leftover pixels rather than as a shop sign.
+  sign.position.set(-1.28, 0.17, -1.52);
   roomGroup.add(sign);
 
   // A single warm spill from the machine's own lighting, painted on the floor.
@@ -1119,6 +1122,50 @@ R.init = function (canvas) {
     ramp.position.set(0, deckY - 0.085, cascadeRampZ());
     ramp.rotation.x = -0.40;
     scene.add(ramp);
+
+    // ── the chute as a path, not a hole ────────────────────────────────────
+    // Closing the sides was not enough: the mouth itself was a dark rectangle
+    // with a dark ramp in it, so the eye read "hole" and the two decks stayed
+    // two machines stacked on each other. What makes a chute legible is a
+    // surface you can follow -- a lit back, two brass rails converging on the
+    // ramp, and a warm strip down the centre that a falling coin crosses.
+    var chuteBackZ = cascZ - 0.030;
+    var chuteMat = M(0x2b1910, 0.86, 0.04);
+    scene.add(box(mouthW, cascH * 0.94, 0.012, chuteMat, 0, deckY - cascH / 2 - 0.01, chuteBackZ));
+
+    // brass guide rails down either side of the mouth, converging slightly so
+    // the chute has a direction
+    [-1, 1].forEach(function (side) {
+      var rail = box(0.010, cascH * 0.90, 0.010, M(0xb08a2e, 0.40, 0.55),
+        side * (mouthW / 2 - 0.022), deckY - cascH / 2 - 0.01, chuteBackZ + 0.010);
+      rail.rotation.z = side * 0.02;
+      scene.add(rail);
+    });
+
+    // the polished strip the coins actually ride: additive so it glows instead
+    // of sitting there as another brown box
+    var pathTex = tex(64, 64, function (c, w, h) {
+      var gr = c.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, 'rgba(255,214,150,0.95)');
+      gr.addColorStop(0.55, 'rgba(255,170,80,0.35)');
+      gr.addColorStop(1, 'rgba(255,150,60,0)');
+      c.fillStyle = gr; c.fillRect(0, 0, w, h);
+    });
+    var pathMat = new THREE.MeshBasicMaterial({
+      color: 0xffb060, map: pathTex, transparent: true, opacity: 0.42,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var chutePath = new THREE.Mesh(new THREE.PlaneGeometry(mouthW * 0.62, cascH * 0.92), pathMat);
+    chutePath.position.set(0, deckY - cascH / 2 - 0.008, chuteBackZ + 0.016);
+    scene.add(chutePath);
+
+    // and a matching wash on the ramp itself, so the light continues past the
+    // lip onto the deck the player is aiming at
+    var rampGlow = new THREE.Mesh(new THREE.PlaneGeometry(mouthW * 0.9, 0.15), pathMat);
+    rampGlow.rotation.x = -Math.PI / 2 + 0.40;
+    rampGlow.position.set(0, deckY - 0.079, cascadeRampZ());
+    scene.add(rampGlow);
+
     // a warm light inside the mouth: coins moving through it get a rim
     var mouthLight = new THREE.PointLight(0xffa64d, 0.55, 0.55, 2);
     mouthLight.position.set(0, deckY - 0.055, cascZ + 0.02);
@@ -1178,6 +1225,34 @@ R.init = function (canvas) {
   var camDir = new THREE.Vector3(0, 0.5655, 0.8249);
   var framing = { dist: 1.6976, aspect: 1, pitch: 0.6, portrait: false };
 
+  // ── camera shake ───────────────────────────────────────────────────────
+  // The slap is a physical hit and the machine should take it too. The offset
+  // is applied in R.render and removed again on the next frame, so nothing in
+  // the scene ever sees a moved camera; camBase is the resting pose, snapshotted
+  // lazily because fitCamera rewrites camera.position on every relayout.
+  var camBase = null, shakeT = 0, shakeDur = 0, shakeMag = 0, shakeLast = 0;
+  var camOff = new THREE.Vector3();
+
+  R.shake = function (mag, ms) {
+    // Motion is decoration here: the hit is already reported by the sound and
+    // the meter, so a reduced-motion player loses nothing by skipping it.
+    var reduce = false;
+    try {
+      reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) {}
+    if (reduce) return;
+    mag = Math.max(0, Math.min(0.06, mag || 0));
+    if (!mag) return;
+    // do not stack: a fresh hit replaces the tail of the old one
+    shakeMag = Math.max(shakeMag * (shakeT > 0 ? shakeT / shakeDur : 0), mag);
+    shakeDur = Math.max(60, ms || 180) / 1000;
+    shakeT = shakeDur;
+  };
+
+  R.shakeState = function () {
+    return { t: shakeT, dur: shakeDur, mag: shakeMag, base: !!camBase };
+  };
+
   // The eye direction is a pure pitch, so the fit solves in closed form:
   // for each point, depth grows with distance while the off-axis offset does
   // not, which makes the required distance a plain division.
@@ -1228,6 +1303,10 @@ R.init = function (canvas) {
     framing.aspect = aspect;
     framing.pitch = pitch;
     framing.portrait = portrait;
+    // The shake moves the camera away from this pose and puts it back. Any
+    // rewrite of camera.position (resize, orientation change, cabinet swap)
+    // makes the remembered pose a lie, so drop it and let R.render re-snap.
+    camBase = null;
     return d;
   }
 
@@ -1368,6 +1447,96 @@ R.room = function () { return roomGroup; };
   }
 
   // ── per-frame sync ─────────────────────────────────────────────────────
+  // ── landing glow ───────────────────────────────────────────────────────
+  // A paid coin used to hit the floor and simply stop existing 0.9 s later:
+  // the only witness was a sound, and the sound does not say WHERE. A short
+  // pool of warm light where it actually landed makes the drop read as a thing
+  // that happened on the floor rather than a coin that vanished. Props get a
+  // much larger, brighter pool -- that landing is the whole point of the game.
+  var glowMeshes = [], glowState = [], glowTex = null, landSeen = new Set();
+
+  function glowTexture() {
+    if (glowTex) return glowTex;
+    glowTex = tex(96, 96, function (c, w, h) {
+      var gr = c.createRadialGradient(w / 2, h / 2, 1, w / 2, h / 2, w / 2);
+      gr.addColorStop(0, 'rgba(255,235,200,1)');
+      gr.addColorStop(0.35, 'rgba(255,190,110,0.55)');
+      gr.addColorStop(0.75, 'rgba(255,140,60,0.14)');
+      gr.addColorStop(1, 'rgba(255,120,40,0)');
+      c.fillStyle = gr; c.fillRect(0, 0, w, h);
+    });
+    return glowTex;
+  }
+
+  function addGlow(x, z, big) {
+    var MAXG = 14;
+    var idx = -1;
+    for (var i = 0; i < glowState.length; i++) {
+      if (glowState[i].t <= 0) { idx = i; break; }
+    }
+    if (idx < 0) {
+      if (glowMeshes.length < MAXG) {
+        var mat = new THREE.MeshBasicMaterial({
+          color: 0xffc06a, map: glowTexture(), transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+        });
+        var m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+        m.rotation.x = -Math.PI / 2;
+        m.visible = false;
+        scene.add(m);
+        glowMeshes.push(m);
+        glowState.push({ t: 0, dur: 1, size: 1 });
+        idx = glowMeshes.length - 1;
+      } else {
+        // full: recycle whatever is closest to done
+        var best = 0, bestT = 1e9;
+        for (var j = 0; j < glowState.length; j++) {
+          if (glowState[j].t < bestT) { bestT = glowState[j].t; best = j; }
+        }
+        idx = best;
+      }
+    }
+    var g = glowState[idx], mesh = glowMeshes[idx];
+    var floorY = (G.Sim.FLOOR_Y || -0.42);
+    g.t = big ? 0.85 : 0.46;      // seconds of life
+    g.dur = g.t;
+    g.size = big ? 0.46 : 0.17;
+    mesh.position.set(x, floorY + 0.003 + (idx % 3) * 0.0004, z);
+    mesh.rotation.z = (idx * 1.7) % 6.283;   // no two pools alike
+    mesh.material.color.setHex(big ? 0xffd79a : 0xffb867);
+    mesh.material.opacity = big ? 0.95 : 0.6;
+    mesh.scale.setScalar(g.size);
+    mesh.visible = true;
+  }
+
+  function stepGlows(dt) {
+    for (var i = 0; i < glowState.length; i++) {
+      var g = glowState[i];
+      if (g.t <= 0) continue;
+      g.t -= dt;
+      var m = glowMeshes[i];
+      if (g.t <= 0) { m.visible = false; g.t = 0; continue; }
+      var k = g.t / g.dur;                 // 1 -> 0
+      // grow a touch while it fades: light spreading on the tiles
+      m.scale.setScalar(g.size * (1 + (1 - k) * 0.5));
+      m.material.opacity = (g.size > 0.3 ? 0.95 : 0.6) * k * k;
+    }
+  }
+
+  // the landing pools are the one cue a still frame cannot show at all, so the
+  // probe reports how many are alive and how bright the brightest one is
+  R.glowState = function () {
+    var live = 0, op = 0, big = 0;
+    for (var i = 0; i < glowState.length; i++) {
+      if (glowState[i].t > 0) {
+        live++;
+        if (glowState[i].size > 0.3) big++;
+        op = Math.max(op, glowMeshes[i].material.opacity);
+      }
+    }
+    return { live: live, big: big, opacity: +op.toFixed(3) };
+  };
+
   R.sync = function (sim, dt) {
     var coins = sim.coins, i, c, m;
 
@@ -1487,6 +1656,16 @@ R.room = function () { return roomGroup; };
         var fade = G.Sim.TRAY_FADE || 0.5;
         var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
+
+        // ── the landing ────────────────────────────────────────────────────
+        // The sim says when a fall is over; that first onFloor frame is the
+        // only moment the player can be told where the coin went, so the pool
+        // of light is spawned here and nowhere else. A prop landing is the
+        // game's biggest beat and gets the big, slow, bright version.
+        if (onFloor && !landSeen.has(fc.id)) {
+          landSeen.add(fc.id);
+          addGlow(fc.fx, fc.fz, fc.kind === 'prop');
+        }
       } else {
         fm2.coin.visible = false;
         if (fm2.prop) fm2.prop.visible = false;
@@ -1496,6 +1675,18 @@ R.room = function () { return roomGroup; };
     // plates, one per deck
     plateMeshes.top.position.z = sim.front.top;
     plateMeshes.bottom.position.z = sim.front.bottom;
+
+    // The landing pools run on their own clock so a paused world still fades
+    // them out; they are light on the floor, not a second physics system.
+    stepGlows(dt || 0.016);
+
+    // landSeen only exists to fire once per fall id, and fall ids are recycled
+    // forever, so drop the ones that have left the world instead of growing.
+    if (landSeen.size > 96) {
+      var alive = new Set();
+      for (var fi = 0; fi < sim.fall.length; fi++) alive.add(sim.fall[fi].id);
+      landSeen.forEach(function (id) { if (!alive.has(id)) landSeen.delete(id); });
+    }
   };
 
   R.buildProp = function (id) {
@@ -1547,7 +1738,34 @@ R.room = function () { return roomGroup; };
   };
   R.pixelRatio = function () { return renderer ? renderer.getPixelRatio() : 1; };
 
-  R.render = function () { renderer.render(scene, camera); };
+  // The camera's resting pose is whatever fitCamera last produced. Snapshot it
+  // the first time we render, and again after anything that moves the eye.
+  R.render = function () {
+    if (shakeT > 0) {
+      var now = performance.now();
+      // wall clock, not frame dt: a dropped frame must not stretch the hit
+      var dts = shakeLast ? Math.min(0.05, (now - shakeLast) / 1000) : 0.016;
+      shakeLast = now;
+      if (!camBase) camBase = camera.position.clone();
+      shakeT = Math.max(0, shakeT - dts);
+      var k = shakeDur > 0 ? shakeT / shakeDur : 0;   // 1 -> 0
+      var amp = shakeMag * k * k;                     // decays fast, ends at 0
+      // a hit is vertical first (the cabinet is being shoved) with a small roll
+      var t = now * 0.001;
+      var wob = Math.sin(t * 46) * 0.35 + Math.sin(t * 91) * 0.15;
+      camOff.set(wob * amp * 0.5, amp * (0.75 + 0.25 * Math.sin(t * 62)), 0);
+      camera.position.copy(camBase).add(camOff);
+      if (shakeT <= 0) {
+        shakeLast = 0;
+        camOff.set(0, 0, 0);
+        camera.position.copy(camBase);
+      }
+    } else if (camBase) {
+      // nothing running: make sure we are not left parked off the pose
+      if (camOff.lengthSq() > 0) { camOff.set(0, 0, 0); camera.position.copy(camBase); }
+    }
+    renderer.render(scene, camera);
+  };
 
   // main.js raycasts against the camera and parents the aim ribbon to the
   // scene, so both have to be reachable from outside this closure.

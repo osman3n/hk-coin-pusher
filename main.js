@@ -11,6 +11,10 @@
   var canvas, app = {}, lastT = 0, acc = 0;
   var PROPS_PER_STAGE = 9;
   var COINS_PER_PROP = 14;
+  // One literal for the starting wallet. The reset used to wipe the wallet and
+  // forget to give it back, which left a fresh player staring at a dead machine
+  // until 陳伯 topped them up 700 ms later.
+  var START_COINS = 24;
 
   var SELFTEST = /[?&]selftest\b/.test(location.search);
   var PROBE = /[?&]probe\b/.test(location.search);
@@ -38,12 +42,14 @@
   // ── stage / prop flow ──────────────────────────────────────────────────
   app.state = {
     stageIdx: 0,
-    coins: 24,
+    coins: START_COINS,
     paidSinceProp: 0,
     nextPropIdx: 0,
     spent: 0,
     lost: 0,
     drops: 0,
+    paid: 0,
+    shuttled: 0,
     started: false
   };
 
@@ -60,6 +66,7 @@
     Sim.onPayout = onPayout;
     Sim.onBigPayout = onBigPayout;
     Sim.onLost = onLost;
+    Sim.onShuttle = onShuttle;
     Sim.seedPile(56 + idx * 4);
     // coins are the wallet and survive an era change; only the table is rebuilt
     UI.setCoins(app.state.coins);
@@ -110,8 +117,10 @@
 
   function onPayout(coin) {
     app.state.coins++;
+    app.state.paid++;
     UI.tick(app.state.coins);
     UI.clink();
+    UI.coinPaid();
     app.state.paidSinceProp++;
     if (app.state.paidSinceProp >= COINS_PER_PROP) {
       app.state.paidSinceProp = 0;
@@ -127,6 +136,18 @@
     if (app.state.lost % 2 === 1) UI.say(pick(C.MACHINE.lost), 1800);
   }
 
+  // A coin riding the upper deck is not paid, not lost, and used to be silent:
+  // the top deck read as scenery. A dry tick as it leaves, throttled, so a
+  // cascade does not turn into a burst of noise.
+  var lastShuttle = 0;
+  function onShuttle(coin) {
+    app.state.shuttled++;
+    var now = performance.now();
+    if (now - lastShuttle < 55) return;
+    lastShuttle = now;
+    UI.shuttlePing();
+  }
+
   function onBigPayout(coin) {
     var id = coin.prop;
     app.state.coins += 3;
@@ -140,12 +161,28 @@
         setTimeout(function () {
           var isLast = app.state.stageIdx >= C.STAGES.length - 1;
           Sim.busy = true;
-          UI.showStageDone(stage(), isLast);
+          UI.showStageDone(stage(), isLast, stageStats());
         }, 620);
       } else {
         UI.say(pick(C.MACHINE.win), 2200);
       }
     });
+  }
+
+  // What the decade cost, in the numbers the player already watched happen.
+  // Drops and losses are this session's; paid is the sim's own count, which is
+  // the only place a payout is authoritative.
+  function stageStats() {
+    var st = stage();
+    var got = 0, all = (st.big || []).concat(st.small || []);
+    all.forEach(function (id) { if (UI.state.collected[id]) got++; });
+    return {
+      drops: app.state.drops,
+      paid: (Sim.stats && Sim.stats.paid) || 0,
+      lost: app.state.lost,
+      got: got,
+      total: all.length
+    };
   }
 
   UI.onNextStage = function () {
@@ -165,6 +202,73 @@
   UI.onStayStage = function () {
     Sim.busy = false;
   };
+
+  // ── reset ──────────────────────────────────────────────────────────────
+  // Settings → 重置進度. A reload would be a lie: boot() calls UI.load() and
+  // reads the old save straight back in, so the save itself has to go first
+  // and everything else has to be re-seeded from zero in place.
+  function resetProgress() {
+    // 1. the save is the only thing that survives; drop it before anything
+    //    else so a crash mid-reset cannot resurrect the old run.
+    try { localStorage.removeItem('yatmangai.save.v1'); } catch (e) {}
+
+    // 2. UI-owned progress: collection, seen story beats, stage chrome.
+    var S = UI.state;
+    S.collected = {};
+    S.found = [];
+    S.storySeen = {};
+    S.cardOpen = false;
+    S.onCardClose = null;
+    S.mdOpen = false;
+    S.mdId = null;
+    S.storyTab = false;
+    S.stageIdx = 0;
+    S.coins = START_COINS;
+
+    // 3. game state. Nothing of the old run may leak into the new one.
+    app.state.stageIdx = 0;
+    // The machine is not dead after a reset: the same opening grant as a first
+    // boot, from the same constant, so a reset player can drop immediately
+    // instead of tapping a dead chute and waiting on 陳伯.
+    app.state.coins = START_COINS;
+    app.state.paidSinceProp = 0;
+    app.state.nextPropIdx = 0;
+    app.state.spent = 0;
+    app.state.lost = 0;
+    app.state.drops = 0;
+    app.state.paid = 0;
+    app.state.shuttled = 0;
+    // the surface order is cached per stage id; a stale order would keep
+    // serving stage-4 props on a 1972 table.
+    app.state.order = null;
+    app.state.orderStage = null;
+
+    // 4. hand the table back: the done card may have frozen it, and the reset
+    //    button is reachable while a card is up.
+    Sim.busy = false;
+    acc = 0;
+    slapBudget = SLAP_MAX;
+    slapCharge = 0;
+    publishSlap(true);
+
+    // 5. rebuild the world at 1972 and repaint the chrome from the new numbers.
+    applyStage(0, true);
+    UI.setCoins(START_COINS);
+    UI.setBigCount(C.STAGES[0]);
+    UI.setTopPile(0);
+    if (UI.paintSettings) UI.paintSettings();
+    var done = document.getElementById('done');
+    if (done) done.classList.remove('on');
+    // a card left open would describe a prize that no longer exists. Close it
+    // by hand instead of UI.closeCard(), whose callback would save the old run
+    // and could pop the stage-done screen for a stage we just left behind.
+    var card = document.getElementById('card');
+    if (card) card.classList.remove('on');
+
+    // 6. write the fresh save last, so what is on disk matches what is on screen.
+    UI.save();
+  }
+  UI.onReset = function () { resetProgress(); };
 
   // ── loop ───────────────────────────────────────────────────────────────
   function frame(now) {
@@ -190,15 +294,51 @@
     // but the player should still get their strength back.
     stepSlap(rawDt);
 
-    // aim marker
+    // aim marker. The slot is the whole game: a marker that looks the same in
+    // the gutter as in the mouth teaches the player nothing, so it changes
+    // colour exactly where the money changes hands.
     if (app.aimRibbon) {
       app.aimRibbon.position.x = aim.x;
       app.aimRibbon.visible = !Sim.busy;
+      paintAimSlot();
     }
+
+    // The upper deck is worth looking at only if it has a number, and the
+    // number only has to be right, not fresh: poll it every 16 frames.
+    if ((frameNo++ & 15) === 0) paintTopPile();
 
     R.sync(Sim, dt);
     R.render();
     requestAnimationFrame(frame);
+  }
+
+  var frameNo = 0;
+
+  function paintTopPile() {
+    if (UI.setTopPile && Sim.countTier) UI.setTopPile(Sim.countTier('top'));
+  }
+
+  // gold while the marker is inside the payout slot, red while it is over the
+  // gutter -- the same colour the gutter strips are painted on the table
+  var aimInSlot = null;
+  function paintAimSlot() {
+    var g = app.aimRibbon;
+    if (!g || !g.userData || !g.userData.head) return;
+    var payW = (Sim.DECKS && Sim.DECKS.bottom && Sim.DECKS.bottom.payW) || 0.31;
+    var inSlot = Math.abs(aim.x) <= payW;
+    if (inSlot === aimInSlot) return;
+    aimInSlot = inSlot;
+    var col = inSlot ? 0xffd28a : 0xc8342b;
+    g.userData.head.material.color.setHex(col);
+    if (g.userData.core) g.userData.core.material.color.setHex(col);
+    if (g.userData.headMat) g.userData.headMat.opacity = inSlot ? 0.92 : 0.75;
+  }
+
+  // the probe has to read the ACTUAL material, not the flag it was set from
+  function aimHeadHex() {
+    var g = app.aimRibbon;
+    if (!g || !g.userData || !g.userData.head) return null;
+    return '#' + g.userData.head.material.color.getHexString();
   }
 
   // ── slap ───────────────────────────────────────────────────────────────
@@ -259,6 +399,8 @@
     publishSlap(true);
     UI.say(pick(C.MACHINE.slap), 2200);
     UI.rumble();
+    // the whole machine should take the hit, not just the sound
+    if (R.shake) R.shake(0.014, 180);
     // jolt every coin a little toward the lip
     for (var i = 0; i < Sim.coins.length; i++) {
       var c = Sim.coins[i];
@@ -285,9 +427,13 @@
     Sim.onBigPayout = onBigPayout;
 
     var loaded = UI.load();
+    // The mute flag came back with the save; paint the switch now so the page
+    // never shows 開 for a frame over a save that says otherwise.
+    if (UI.paintSettings) UI.paintSettings();
     if (loaded) app.state.coins = UI.state.coins || 0;
-    if (!loaded || app.state.coins <= 0) app.state.coins = 24;
+    if (!loaded || app.state.coins <= 0) app.state.coins = START_COINS;
     applyStage(loaded ? UI.state.stageIdx : 0, loaded);
+    paintTopPile();
 
     // aim ribbon: a thin glowing line above the drop rail
     app.aimRibbon = buildAimRibbon();
@@ -373,6 +519,31 @@
     core.rotation.x = -Math.PI / 2;
     core.position.set(0, 0.070, G.Sim.DROP_Z);
     g.add(core);
+
+    // The gutter, drawn on the paying deck before the player commits. The cost
+    // of a bad aim used to be invisible until after the fact: the coin left the
+    // front edge and became scrap with no warning. Two dim red strips sit over
+    // everything outside the payout slot, so the risk is legible while aiming.
+    var bot = (G.Sim.DECKS && G.Sim.DECKS.bottom) || {};
+    var payW = (typeof bot.payW === 'number') ? bot.payW : 0.31;
+    var tw = 0.56;                            // one table half-width
+    var gW = tw - payW;                       // width the gutter occupies
+    var gz0 = (bot.table && typeof bot.table.z0 === 'number') ? bot.table.z0 : -0.44;
+    var gMat = new THREE.MeshBasicMaterial({
+      color: 0x8c2f24, transparent: true, opacity: 0.15, depthWrite: false
+    });
+    var gutters = [];
+    [-1, 1].forEach(function (side) {
+      var m = new THREE.Mesh(new THREE.PlaneGeometry(gW, 0.42), gMat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(side * (payW + gW / 2), 0.052, gz0 + 0.21);
+      g.add(m);
+      gutters.push(m);
+    });
+    g.userData.head = head;
+    g.userData.core = core;
+    g.userData.headMat = solid;
+    g.userData.gutters = gutters;
     return g;
   }
 
@@ -615,8 +786,18 @@
         dragging: aim.dragging,
         moved: +gesture.moved.toFixed(0),
         gid: gesture.id,
-        busy: !!Sim.busy
-      }
+        busy: !!Sim.busy,
+        // gold in the payout slot, red over the gutter: the only HUD cue
+        // that lives on the table, so it has to be provable headlessly
+        inSlot: aimInSlot
+      },
+      // a shake is the one cue a screenshot cannot show at all
+      shake: R.shakeState ? R.shakeState() : null,
+      // so is a landing pool, and it is the only feedback a paid coin leaves
+      glow: R.glowState ? R.glowState() : null,
+      // and so is the marker's colour, which is the one thing on the table
+      // that tells the player where their money is going
+      aim: aimHeadHex()
     });
   }
 
