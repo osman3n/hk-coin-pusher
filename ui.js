@@ -19,7 +19,8 @@
     mdOpen: false,      // museum detail panel open?
     mdId: null,         // which prop the panel is showing
     storySeen: {},      // stage id -> true, so a beat is read once per save
-    storyTab: false     // the museum is showing 故事線 instead of 藏品
+    storyTab: false,    // the museum is showing 故事線 instead of 藏品
+    settingsFromMuseum: false
   };
 
   UI.state = state;
@@ -307,9 +308,10 @@
     $('slapBtn').onclick = function () { if (UI.onSlap) UI.onSlap(); };
 
     // ── settings ─────────────────────────────────────────────────────────
-    // The sound switch and the reset button live here now, so the main screen
-    // keeps exactly three controls: 博物館 / 設定 / 拍機.
-    $('settingsBtn').onclick = function () { UI.openSettings(); };
+    // Settings is not a thing you do at the table. The main screen keeps the
+    // two controls a player actually touches mid-game -- 拍機 and the prize
+    // cabinet -- and the switch and reset hang off the cabinet instead.
+    $('museumSettings').onclick = function () { UI.openSettings(); };
     $('settingsClose').onclick = function () { UI.closeSettings(); };
     $('soundToggle').onclick = function () { UI.toggleMuted(); };
     $('settingsReset').onclick = function () { armReset(); };
@@ -529,21 +531,6 @@
       if (k < 1) requestAnimationFrame(anim);
       else { state.coins = to; els.coins.textContent = to; }
     })();
-  };
-
-  // ── 上層 N 枚 ──────────────────────────────────────────────────────────
-  // Same contract as paintSlap(): write the DOM only when the number actually
-  // changed, so polling it every few frames costs nothing.
-  var topPileShown = -1;
-  UI.setTopPile = function (n) {
-    var el = $('topPile');
-    if (!el) return;
-    var v = Math.max(0, Math.round(n || 0));
-    if (v === topPileShown) return;
-    topPileShown = v;
-    if (v <= 0) { el.hidden = true; return; }
-    el.hidden = false;
-    el.innerHTML = '上層 <b>' + v + '</b> 枚';
   };
 
   // ── the machine speaks ─────────────────────────────────────────────────
@@ -902,6 +889,13 @@
   }
 
   UI.openSettings = function () {
+    // Settings is reached from the cabinet, so it takes over the screen rather
+    // than stacking on it: two dialogs both claiming aria-modal is a lie to a
+    // screen reader, and a 96% opaque sheet lets the one underneath ghost
+    // through. The museum is put down here and picked back up on close.
+    UI.settingsReturn = $('museumSettings');
+    state.settingsFromMuseum = els.museum.classList.contains('on');
+    if (state.settingsFromMuseum) els.museum.classList.remove('on');
     paintSound();
     paintResetCopy();
     disarmReset();
@@ -915,8 +909,16 @@
     if (!els.settings.classList.contains('on')) return;
     disarmReset();
     els.settings.classList.remove('on');
+    if (state.settingsFromMuseum) {
+      // back to the cabinet, still inside the overlay, still inert page
+      state.settingsFromMuseum = false;
+      els.museum.classList.add('on');
+      focusLater($('museumClose'));
+      return;
+    }
     setPageInert(false);
-    if ($('settingsBtn')) focusLater($('settingsBtn'));
+    if (UI.settingsReturn) focusLater(UI.settingsReturn);
+    else if ($('museumBtn')) focusLater($('museumBtn'));
   };
   UI.isSettingsOpen = function () { return els.settings.classList.contains('on'); };
 
@@ -984,7 +986,7 @@
     var cells = [
       { k: '跌出嚟', v: num(stats.drops, 0), cls: 'down' },
       { k: '收得返', v: num(stats.paid, 0), cls: 'up' },
-      { k: '上層搬走', v: num(stats.lost, 0), cls: 'down' },
+      { k: '側溝食咗', v: num(stats.lost, 0), cls: 'down' },
       { k: '收藏', v: got + '/' + total, cls: 'up' }
     ];
     box.innerHTML = cells.map(function (c) {

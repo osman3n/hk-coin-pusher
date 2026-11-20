@@ -1,15 +1,29 @@
 /* 一蚊雞 — sim.js
  * 2.5D coins-on-a-table simulation. No DOM, no three.js: testable in isolation.
  *
- * TWO DECKS. The player feeds the upper deck; its plate shoves coins over its
- * own lip and they cascade onto the lower deck, where a second plate (running
- * on a different period, so the two never sweep together) works the pile out
- * through the payout slot. Two tiers of the same 2.5D code, not two physics
- * engines: a coin carries `tier` and every routine reads its deck's bounds.
+ * ONE DECK, ONE SLIDING PLATE.
  *
- * Coordinate space: x right, z toward the player. A deck's lip is at z =
- * deck.table.lip. Real 3D integration is used only for the fall between decks
- * and for the payout drop, where it costs nothing and buys the whole payoff.
+ * The machine has a single felt bed and one steel plate that slides across it.
+ * The plate is a raised shelf, PLATE_DROP proud of the felt, spanning from the
+ * back wall out to its leading rib. That slab is the whole reason for the
+ * shape: a dropped coin visibly LANDS ON THE BAR and is carried by it, instead
+ * of sitting on inert felt until a metre of pile crushes it forward.
+ *
+ * The plate carries a coin forward by only RIDE of the stroke and does not drag
+ * it back on the return, so each cycle the coin slides forward relative to the
+ * rib. Within about one cycle it clears the retracted rib position, at which
+ * point it is on the felt in front of the plate and the rib shoves it like any
+ * other coin. RIDE < 1 is what stops the plate from being a conveyor that
+ * needs no feeding at all.
+ *
+ * The plate's forward stop is well short of the lip on purpose. The band
+ * between them is the reservoir: coins there are moved only by their
+ * neighbours, which is exactly how a real pusher transfers a stroke across a
+ * pile instead of firing coins off the table.
+ *
+ * Coordinate space: x right, z toward the player. The lip is at z =
+ * DECK.table.lip. True 3D integration is used only for the payout drop, where
+ * it costs nothing and buys the whole payoff.
  */
 (function (G) {
   'use strict';
@@ -17,58 +31,55 @@
   var COIN_R = 0.036, COIN_M = 1;
   var STEP = 1 / 120;
 
-  var DECKS = {
-    top: {
-      key: 'top',
-      y: 0.22,
-      // The upper deck must BUFFER, not pipe. If the plate's forward extreme
-      // reaches the lip, every coin it touches leaves immediately and the deck
-      // drains to empty -- it becomes a conveyor. The stroke stops well short,
-      // so a standing pile forms in front of it and only the leading edge
-      // spills. That pile is the whole point of a second deck.
-      // The upper deck sits over the REAR of the lower one. That is a geometry
-      // constraint, not a styling choice: a coin landing past the lower plate's
-      // forward extreme (z = 0.02) is never pushed again and never reaches the
-      // lip either, so it jams the table solid. Landing around z = -0.11 keeps
-      // every cascaded coin inside the lower plate's stroke.
-      // Tuned in tools/_topsweep.mjs (240 s runs). The gap between the plate's
-      // forward stop and the lip is the reservoir that makes the upper deck
-      // read as "holding coins": fwd -0.33 / lip -0.15 keeps ~40 coins up top
-      // while still cascading enough to feed the lower deck.
-      table: { x0: -0.56, x1: 0.56, z0: -0.52, z1: -0.15, lip: -0.15 },
-      plate: { back: -0.48, fwd: -0.33, period: 2.15 },
-      dropZ: -0.36,
-      // The upper deck pays nothing. Everything that leaves it lands below.
-      payW: 0.56
-    },
-    bottom: {
-      key: 'bottom',
-      y: 0.0,
-      table: { x0: -0.56, x1: 0.56, z0: -0.44, z1: 0.30, lip: 0.30 },
-      plate: { back: -0.40, fwd: 0.02, period: 2.6 },
-      dropZ: -0.20,
-      // The payout slot, as a half-width in x. The table is 1.12 wide; this
-      // slot is 0.56. Everything that leaves outside it is machine scrap.
-      payW: 0.31,
-      // In front of this line the side rails stop. A real pusher's front
-      // corners are open: shove a coin sideways and it disappears into the
-      // machine. Without this the lower deck has no drain -- every fed coin
-      // stays, the pile jams solid against the plate, and the payout rate
-      // collapses to nothing. It also gives wild aiming a real cost.
-      gutterZ: 0.06
-    }
+  // One deck, wide enough that the pile can spread sideways and deep enough
+  // that a coin must be shoved several times before it reaches the lip.
+  var DECK = {
+    key: 'main',
+    y: 0,
+    table: { x0: -0.62, x1: 0.62, z0: -0.52, z1: 0.34, lip: 0.34 },
+    // The plate's stroke, as the z of its leading rib. `back` must stay in
+    // front of dropZ so a dropped coin lands on the slab; `fwd` must stay well
+    // behind the lip or the plate itself would sweep coins straight into the
+    // slot and the reservoir would disappear.
+    // `fwd` is measured, not guessed. With the rib stopping at 0.10 the gap to
+    // the lip is so short that a sparse pile is still shoved straight through
+    // and the return rate pinned at 1.00 for every friction value tried. At 0.02
+    // the gap holds a few coins that are only moved by pile pressure from
+    // behind, which is the mechanism that makes aiming matter: centre aim pays
+    // ~0.88, a half-slot aim ~0.14.
+    plate: { back: -0.22, fwd: 0.02, period: 2.4 },
+    dropZ: -0.30,
+    // The payout slot, as a half-width in x. The table is 1.24 wide, so this is
+    // a third of it. Measured: p90 of the x of a coin crossing the lip is only
+    // 0.15, because a heap funnels itself down the middle on the way out -- so a
+    // slot much wider than 0.22 swallows 96% of what arrives and the wallet
+    // never moves.
+    payW: 0.22,
+    // In front of this line the rails stop: a coin shoved past the side edge
+    // here tips into the machine and is gone. That is a real pusher's open
+    // front corner, and without it the deck has no drain -- the pile jams
+    // solid against the rib and the payout rate collapses.
+    gutterZ: 0.10,
+    // How far the plate stands proud of the felt. Not decoration: it is what
+    // makes a carried coin read as lying ON the bar, and what makes the rib a
+    // wall rather than a paint stripe.
+    plateDrop: 0.016
   };
-  var TOP = DECKS.top, BOT = DECKS.bottom;
+  var DECKS = { main: DECK };
+  // Compat aliases: older tools and the probe still ask for TOP / BOTTOM.
+  var TOP = DECK, BOT = DECK;
+  var TABLE = DECK.table, PLATE = DECK.plate;
+  var DROP_Z = DECK.dropZ, PAY_W = DECK.payW;
+  var PLATE_DROP = DECK.plateDrop;
 
-  // legacy: the bottom deck is "the table" for anything that predates tiers
-  var TABLE = BOT.table;
-  var PLATE = BOT.plate;
-  var DROP_Z = TOP.dropZ;
-  var PAY_W = BOT.payW;
+  // Fraction of the forward stroke a coin standing on the plate is carried by.
+  // See the header: below 1 the coin slides forward relative to the rib and
+  // joins the pile instead of riding for ever.
+  var RIDE = 0.55;
 
   // The room floor in front of the machine. There is no payout basin: a coin
-  // that leaves the lower deck falls down the front of the cabinet and stops
-  // here, on the same plane the room floor is drawn on in render.js buildRoom()
+  // that leaves the deck falls down the front of the cabinet and stops here, on
+  // the same plane the room floor is drawn on in render.js buildRoom()
   // (floor.position.y = -0.42). The floor is the destination, not a tray.
   var FLOOR_Y = -0.42;
   // A landed coin lies on the floor this long so the payout registers, then it
@@ -78,13 +89,8 @@
   var MAX_TRAY = 18;
   var MAX_COINS = 480, MAX_LAYER = 12;
 
-  // Gravity for the inter-deck cascade and the payout drop.
+  // Gravity for the payout drop.
   var GRAV = 3.6;
-
-  // Portion of a coin's sideways offset that survives the drop between decks.
-  // The scoop under the upper lip necks the feed toward the centre; a coin
-  // leaving the upper edge at x = 0.5 lands near x = 0.2.
-  var SCOOP = 0.40;
 
   // Friction, as a per-second decay rate. Coins slide a good distance and stop;
   // props are heavy and grab the felt quickly. This is what lets one stroke
@@ -139,91 +145,106 @@
   };
 
   function blankStats() {
-    return { dropped: 0, paid: 0, bigPaid: 0, lost: 0, shuttled: 0, maxLayer: 0 };
+    return { dropped: 0, paid: 0, bigPaid: 0, lost: 0, ridden: 0, maxLayer: 0 };
   }
 
   // ── state ──────────────────────────────────────────────────────────────
   var Sim = {
-    coins: [],        // on either table
-    fall: [],         // in true-3D freefall: inter-deck cascade or payout drop
+    coins: [],        // on the deck
+    fall: [],         // in true-3D freefall: the payout drop
     nextId: 1,
     t: 0,
-    front: { top: TOP.plate.back, bottom: BOT.plate.back },
-    vel: { top: 0, bottom: 0 },
+    front: DECK.plate.back,   // z of the plate's leading rib
+    vel: 0,                   // rib velocity, m/s
+    dFront: 0,                // rib displacement this step, m
     rng: makeRng(1),
     stats: blankStats(),
     onPayout: null,   // fn(coin)
     onBigPayout: null,
     onLost: null,
-    onShuttle: null,  // fn(coin) — a coin just left the upper deck
     busy: false,      // a collect card is open; hold the world still
 
     grid: new Grid(0.11),
     _q: [],
 
-    // Test seam: let tools re-shape a deck before reset() so geometry sweeps
+    // Test seam: let tools re-shape the deck before reset() so geometry sweeps
     // run against the same code path the game uses.
     setDeck: function (tier, patch) {
-      var d = DECKS[tier];
-      if (!d || !patch) return;
-      if (patch.lip != null) { d.table.lip = patch.lip; d.table.z1 = patch.lip; }
-      if (patch.fwd != null) d.plate.fwd = patch.fwd;
-      if (patch.back != null) d.plate.back = patch.back;
-      if (patch.period != null) d.plate.period = patch.period;
-      if (patch.payW != null) d.payW = patch.payW;
-      if (patch.scoop != null) SCOOP = patch.scoop;
+      if (!patch) return;
+      if (patch.lip != null) { DECK.table.lip = patch.lip; DECK.table.z1 = patch.lip; }
+      if (patch.fwd != null) DECK.plate.fwd = patch.fwd;
+      if (patch.back != null) DECK.plate.back = patch.back;
+      if (patch.period != null) DECK.plate.period = patch.period;
+      if (patch.payW != null) DECK.payW = patch.payW;
+      if (patch.dropZ != null) DECK.dropZ = patch.dropZ;
+      if (patch.ride != null) RIDE = patch.ride;
+      if (patch.gutterZ != null) DECK.gutterZ = patch.gutterZ;
     },
 
     reset: function (seed) {
       this.coins.length = 0; this.fall.length = 0;
       this.nextId = 1; this.t = 0;
-      this.front = { top: TOP.plate.back, bottom: BOT.plate.back };
-      this.vel = { top: 0, bottom: 0 };
       this.rng = makeRng(seed == null ? 1 : seed);
-      // Park each plate exactly where its phase clock says it should be at
-      // t = 0, so the first step is a continuation rather than a jump.
-      this._parkPlates();
+      this._parkPlate();
       this.stats = blankStats();
       this.busy = false;
-      if (this.payW == null) this.payW = PAY_W;
+      if (this.payW == null) this.payW = DECK.payW;
     },
 
-    _parkPlates: function () {
-      var self = this;
-      ['top', 'bottom'].forEach(function (tier) {
-        var P = DECKS[tier].plate;
-        var phase = tier === 'bottom' ? 0.85 : 0;
-        var ph = ((self.t + phase) % P.period) / P.period;
-        var s = 0.5 - 0.5 * Math.cos(ph * Math.PI * 2);
-        self.front[tier] = P.back + (P.fwd - P.back) * s;
-      });
+    _parkPlate: function () {
+      var P = DECK.plate;
+      var ph = (this.t % P.period) / P.period;
+      var s = 0.5 - 0.5 * Math.cos(ph * Math.PI * 2);
+      this.front = P.back + (P.fwd - P.back) * s;
+      this.vel = 0; this.dFront = 0;
     },
 
-    // Place a coin on a deck. kind: 'coin' | 'prop'
-    spawn: function (x, z, kind, propId, tier) {
+    // Is this coin standing on the raised plate rather than on the felt?
+    // The plate spans from the back wall out to its rib, so the rib's z is the
+    // only boundary. A quarter-radius of slack keeps a coin that is half over
+    // the edge on the plate rather than snapping between levels.
+    onPlate: function (c) {
+      return c.z < this.front - c.r * 0.25;
+    },
+
+    // Base y a coin rests at, before layer height. Coins on the plate sit one
+    // plate-thickness higher than coins in front of it.
+    _baseY: function (c) {
+      return this.onPlate(c) ? DECK.y + PLATE_DROP : DECK.y;
+    },
+
+    // Place a coin on the deck. kind: 'coin' | 'prop'
+    spawn: function (x, z, kind, propId) {
       if (this.coins.length >= MAX_COINS) this._retireOldest();
       var def = kind === 'prop' ? G.CONTENT.PROPS[propId] : null;
       var r = def ? (def.radius || 0.11) : COIN_R;
       var m = def ? (def.weight || 2) : COIN_M;
       var c = {
-        id: this.nextId++, x: x, z: z, l: 0, cy: 0.6,          // cy = visual y, eases to l*h
+        id: this.nextId++, x: x, z: z, l: 0, cy: 0.6,
         vx: 0, vz: 0, r: r, m: m, im: 1 / m,
-        kind: kind, prop: propId || null, ax: 0, az: 0,          // ax/az = render-only tumble
-        fallT: 0.26,                                               // landing animation
-        state: 'table', tier: tier || 'bottom', _q: 0
+        kind: kind, prop: propId || null, ax: 0, az: 0,
+        fallT: 0.26,
+        state: 'table', tier: 'main', _q: 0
       };
       this.coins.push(c);
       return c;
     },
 
-    // The player's coin always enters the upper deck.
+    // The player's coin always lands on the plate: dropZ is behind the most
+    // retracted rib position, so there is no phase of the stroke that puts the
+    // drop point ahead of the plate.
     drop: function (x) {
-      var t = TOP.table;
-      var z = Math.max(TOP.dropZ, this.front.top + COIN_R + 0.004);
-      z = Math.min(z, t.lip - COIN_R);
-      var c = this.spawn(clamp(x, t.x0 + COIN_R, t.x1 - COIN_R), z, 'coin', null, 'top');
+      var t = DECK.table;
+      var z = Math.min(DROP_Z, this.front - COIN_R * 1.2);
+      z = Math.max(z, t.z0 + COIN_R);
+      // A real chute is not a precision instrument: the coin tumbles out and
+      // lands a little off. Kept under one coin radius so the player's aim still
+      // means what it says -- enough to stop a perfectly centred tap from being a
+      // guaranteed win on an empty-ish deck.
+      var jx = (this.rng() - 0.5) * COIN_R * 1.2;
+      var c = this.spawn(clamp(x + jx, t.x0 + COIN_R, t.x1 - COIN_R), z, 'coin', null);
       c.fallT = 0.30;
-      c.cy = TOP.y + 0.26;
+      c.cy = DECK.y + PLATE_DROP + 0.26;
       this.stats.dropped++;
       return c;
     },
@@ -238,23 +259,16 @@
       if (best >= 0) this.coins.splice(best, 1);
     },
 
-    // Scatter a believable starting pile. Both decks, because a machine that
-    // has been on a shop floor since 1972 is never sold empty.
+    // Scatter a believable starting pile. A machine that has been on a shop
+    // floor since 1972 is never sold empty, and one that starts empty reads as
+    // broken rather than as a fresh challenge.
     seedPile: function (n) {
-      var rnd = this.rng;
-      // The upper deck is the one the player reads first, so it must be
-      // visibly stocked at stage start; the lower deck fills itself.
-      var bottomN = Math.round(n * 0.46);
+      var rnd = this.rng, t = DECK.table;
       for (var i = 0; i < n; i++) {
-        var top = i >= bottomN;
-        var dk = top ? TOP : BOT;
-        var t = dk.table;
-        var zLo = top ? t.z0 + 0.04 : -0.16;
-        var zHi = top ? t.lip - 0.07 : 0.14;
         var x = t.x0 + 0.05 + rnd() * (t.x1 - t.x0 - 0.10);
-        var z = zLo + rnd() * (zHi - zLo);
-        var c = this.spawn(x, z, 'coin', null, top ? 'top' : 'bottom');
-        c.cy = 0;
+        var z = t.z0 + 0.06 + rnd() * (t.lip - t.z0 - 0.16);
+        var c = this.spawn(x, z, 'coin', null);
+        c.cy = this._baseY(c);
         c.fallT = 0;
         c.vx = (rnd() - 0.5) * 0.05;
         c.vz = (rnd() - 0.5) * 0.05;
@@ -267,41 +281,58 @@
       if (this.busy) { this._animateOnly(dt); return; }
       this.t += dt;
 
-      this._sweep('top', dt, 0);
-      this._sweep('bottom', dt, 0.85);
-
+      this._sweep(dt);
+      this._carry();
       this._recomputeLayers();
       this._move(dt);
       this._collide();
-      this._plate('top');
-      this._plate('bottom');
+      this._rib();
       this._walls();
       this._payout();
       this._animateOnly(dt);
     },
 
-    _sweep: function (tier, dt, phase) {
-      var P = DECKS[tier].plate;
-      var ph = ((this.t + phase) % P.period) / P.period;
+    _sweep: function (dt) {
+      var P = DECK.plate;
+      var ph = (this.t % P.period) / P.period;
       var s = 0.5 - 0.5 * Math.cos(ph * Math.PI * 2);
-      var prev = this.front[tier];
-      this.front[tier] = P.back + (P.fwd - P.back) * s;
+      var prev = this.front;
+      this.front = P.back + (P.fwd - P.back) * s;
       // The stroke has a known top speed: d/dph of the cosine ease is PI, so
       // |v| <= |fwd - back| * PI / period. Anything above that can only come
       // from a discontinuity -- reset() dropping `front` back to its rest
-      // position while the phase clock keeps running -- and a phantom stroke
-      // of tens of m/s is enough to fire the whole seeded pile off the table
-      // and send payout coins to z = 17. Clamp it at the physical bound.
+      // position while the phase clock keeps running -- and a phantom stroke of
+      // tens of m/s is enough to fire the whole seeded pile off the table and
+      // send payout coins to z = 17. Clamp it at the physical bound.
       var vmax = Math.abs(P.fwd - P.back) * Math.PI / P.period * 1.5;
-      var v = (this.front[tier] - prev) / dt;
-      this.vel[tier] = v > vmax ? vmax : v < -vmax ? -vmax : v;
+      var v = (this.front - prev) / dt;
+      this.vel = v > vmax ? vmax : v < -vmax ? -vmax : v;
+      this.dFront = this.front - prev;
+    },
+
+    // Carry the coins standing on the plate. Only the forward half of the
+    // stroke moves them, and only by RIDE of it. On the return the slab slides
+    // out from under them and they stay put -- which is what a plate with coins
+    // resting on it actually does, and what makes the net drift forward.
+    _carry: function () {
+      var d = this.dFront;
+      if (d <= 0) return;
+      var moved = 0;
+      for (var i = 0; i < this.coins.length; i++) {
+        var c = this.coins[i];
+        if (c.fallT > 0) continue;
+        if (c.z > this.front - c.r * 0.25) continue;   // ahead of the rib: shoved, not carried
+        c.z += d * RIDE;
+        moved++;
+      }
+      if (moved) this.stats.ridden += moved;
     },
 
     _animateOnly: function (dt) {
-      // visual settle: cy eases toward the layer height
+      // visual settle: cy eases toward the surface + layer height
       for (var i = 0; i < this.coins.length; i++) {
         var c = this.coins[i];
-        var target = DECKS[c.tier].y + c.l * 0.0132;
+        var target = this._baseY(c) + c.l * 0.0132;
         c.cy += (target - c.cy) * Math.min(1, dt * 14);
         if (c.fallT > 0) c.fallT -= dt;
         c.ax *= 0.90; c.az *= 0.90;
@@ -322,7 +353,7 @@
           var blocked = false;
           for (var j = 0; j < q.length; j++) {
             var o = q[j];
-            if (o === c || o.l !== L || o.tier !== c.tier) continue;
+            if (o === c || o.l !== L) continue;
             var dx = o.x - c.x, dz = o.z - c.z;
             var lim = (c.r + o.r) * 0.74;
             if (dx * dx + dz * dz < lim * lim) { blocked = true; break; }
@@ -339,9 +370,8 @@
       for (var i = 0; i < this.coins.length; i++) {
         var c = this.coins[i];
         if (c.fallT > 0) {
-          // still dropping from the chute: it rides the plate, it does not collide
+          // still dropping from the chute: it does not collide yet
           c.x += c.vx * dt * 0.2;
-          if (c.z < this.front[c.tier] + c.r) c.z = this.front[c.tier] + c.r;
           c.vx *= 0.9; c.vz = 0;
           continue;
         }
@@ -367,7 +397,6 @@
           for (j = 0; j < q.length; j++) {
             var b = q[j];
             if (b.id <= a.id || b.fallT > 0) continue;
-            if (b.tier !== a.tier) continue;   // the two decks are separate worlds
             var dx = b.x - a.x, dz = b.z - a.z;
             var d2 = dx * dx + dz * dz;
             var rr = a.r + b.r;
@@ -376,7 +405,7 @@
               // Stacked coins DO overlap in plan view -- that overlap is what
               // makes a coin count as being on the layer above. So they must
               // not be pushed apart here; instead a stack moves as one mass,
-              // sharing forward motion. Without this the pile above the plate
+              // sharing forward motion. Without this the pile above the rib
               // sheared off and never carried a stroke across the table.
               var rr2 = rr * 0.86;
               if (d2 >= rr2 * rr2 || d2 < 1e-9) continue;
@@ -406,13 +435,13 @@
       }
     },
 
-    _plate: function (tier) {
-      var face = this.front[tier], vel = this.vel[tier];
+    _rib: function () {
+      var face = this.front, vel = this.vel;
       for (var i = 0; i < this.coins.length; i++) {
         var c = this.coins[i];
-        if (c.tier !== tier) continue;
-        // Only what is in front of the face is pushed. A coin behind the plate
-        // is behind it — the sweep must not reach through the steel.
+        if (c.fallT > 0) continue;
+        // Only what is in front of the rib is shoved. A coin behind it is
+        // standing on the plate and is carried by _carry() instead.
         if (c.z < face) continue;
         var over = (face + c.r) - c.z;
         if (over > 0) {
@@ -423,31 +452,37 @@
     },
 
     _walls: function () {
+      var t = DECK.table;
       for (var i = this.coins.length - 1; i >= 0; i--) {
-        var c = this.coins[i], dk = DECKS[c.tier], t = dk.table;
+        var c = this.coins[i];
         if (c.z - c.r < t.z0) { c.z = t.z0 + c.r; c.vz = Math.abs(c.vz) * 0.3; }
 
-        // Front corners are open on the paying deck: a coin shoved past the
-        // side edge in that zone tips into the machine and is gone.
-        if (dk.gutterZ != null && c.z > dk.gutterZ &&
-            (c.x - c.r * 0.5 < t.x0 || c.x + c.r * 0.5 > t.x1)) {
+        // The front edge is OPEN. There is no kerb to hold coins back: what
+        // reaches the lip either goes through the slot and pays, or falls off
+        // beside it into the machine. A kerb seems safer but it is a funnel --
+        // it holds the heap and pile pressure squeezes every last coin into the
+        // slot from the side, which measured a 100% return and made the wallet
+        // a decoration.
+        //
+        // Side rails stop at the gutter line. In front of it the corners are
+        // open too, so a heap pushed wide spills out there.
+        if (c.z <= DECK.gutterZ) {
+          if (c.x - c.r < t.x0) { c.x = t.x0 + c.r; c.vx = Math.abs(c.vx) * 0.35; }
+          if (c.x + c.r > t.x1) { c.x = t.x1 - c.r; c.vx = -Math.abs(c.vx) * 0.35; }
+        } else if (c.x - c.r * 0.5 < t.x0 || c.x + c.r * 0.5 > t.x1) {
           if (c.kind === 'prop') { c.x = clamp(c.x, t.x0 + c.r, t.x1 - c.r); }
-          else { this._scrap(c); continue; }
+          else { this._scrap(c); }
         }
-
-        if (c.x - c.r < t.x0) { c.x = t.x0 + c.r; c.vx = Math.abs(c.vx) * 0.35; }
-        if (c.x + c.r > t.x1) { c.x = t.x1 - c.r; c.vx = -Math.abs(c.vx) * 0.35; }
       }
     },
 
-    // A coin that leaves the table without paying. Same downstream treatment
-    // as a coin outside the payout slot: it falls out of sight and is gone.
+    // A coin that leaves the deck without paying. Same downstream treatment as
+    // a coin outside the payout slot: it falls to the floor and is gone.
     _scrap: function (c) {
       var i = this.coins.indexOf(c);
       if (i < 0) return;
       this.coins.splice(i, 1);
-      var dk = DECKS[c.tier];
-      c.fx = c.x; c.fz = c.z; c.fy = dk.y + c.l * 0.0132;
+      c.fx = c.x; c.fz = c.z; c.fy = this._baseY(c) + c.l * 0.0132;
       c.fvx = c.vx * 1.4; c.fvz = c.vz * 0.6; c.fvy = 0.02;
       c.fax = (this.rng() - 0.5) * 9; c.faz = (this.rng() - 0.5) * 9;
       c.age = 0; c.state = 'lost';
@@ -456,49 +491,28 @@
       if (this.onLost) this.onLost(c);
     },
 
-    // Cross the lip.
-    //   upper deck  -> the coin tumbles down onto the lower deck
-    //   lower deck  -> payout (inside the slot) or scrap (outside it)
-    // The slot is narrower than the table. That is the house edge of a real
-    // pusher, and the reason aiming matters.
+    // Cross the lip. _walls() has already stopped everything outside the slot,
+    // so almost every coin that gets here is inside it -- except a prop, whose
+    // radius can straddle a brass cheek. A prize is never confiscated.
     _payout: function () {
       for (var i = this.coins.length - 1; i >= 0; i--) {
         var c = this.coins[i];
         if (c.fallT > 0) continue;
-        var dk = DECKS[c.tier];
-        if (!(c.z - c.r * 0.15 > dk.table.lip)) continue;
+        if (!(c.z - c.r * 0.15 > DECK.table.lip)) continue;
 
         this.coins.splice(i, 1);
         c.fx = c.x;
         c.fz = c.z;
-        c.fy = dk.y + c.l * 0.0132;
+        c.fy = this._baseY(c) + c.l * 0.0132;
         c.fvy = 0.10;
         c.fax = (this.rng() - 0.5) * 9;
         c.faz = (this.rng() - 0.5) * 9;
         c.age = 0;
-
-        if (c.tier === 'top') {
-          // Cascade. The scoop under the upper lip necks down, so a coin that
-          // leaves at the far edge still lands near the middle of the paying
-          // deck. Without the funnel, aiming left/right on the top deck decided
-          // the payout almost entirely by itself and wild aiming went to zero
-          // return -- one decision, doubled, with the second one invisible.
-          c.state = 'shuttle';
-          c.fvz = Math.min(0.42, Math.max(c.vz * 0.45, 0.10));
-          c.fvx = (c.x * (SCOOP - 1) + c.vx * 0.22) / 1.0;
-          this.fall.push(c);
-          this.stats.shuttled++;
-          if (this.onShuttle) this.onShuttle(c);
-          continue;
-        }
-
-        // A prop is tall enough to tumble over the lip anywhere; a coin has to
-        // go through the slot. Losing a prize you spent minutes pushing would
-        // just be cruel.
-        var paid = c.kind === 'prop' || Math.abs(c.x) <= this.payW;
-        c.state = paid ? 'falling' : 'lost';
         c.fvz = clamp(Math.max(c.vz, 0.22) + 0.12, 0.10, 0.90);
         c.fvx = clamp(c.vx, -0.60, 0.60);
+
+        var paid = c.kind === 'prop' || Math.abs(c.x) <= this.payW;
+        c.state = paid ? 'falling' : 'lost';
         this.fall.push(c);
 
         if (!paid) {
@@ -514,32 +528,12 @@
       }
     },
 
-    // Hand a cascaded coin back into the simulation on the lower deck. It must
-    // land in front of the lower plate's face, exactly like a dropped coin, or
-    // it spends half a sweep buried inside the steel.
-    _land: function (fc) {
-      if (this.coins.length >= MAX_COINS) this._retireOldest();
-      var t = BOT.table, r = fc.r;
-      var z = clamp(fc.fz, t.z0 + r, t.lip - 0.05);
-      var floorZ = this.front.bottom + r + 0.004;
-      if (z < floorZ) z = Math.min(t.lip - 0.05, floorZ);
-      var c = {
-        id: this.nextId++, x: clamp(fc.fx, t.x0 + r, t.x1 - r), z: z,
-        l: 0, cy: BOT.y + 0.26, vx: fc.fvx * 0.55, vz: Math.max(fc.fvz * 0.45, 0.02),
-        r: r, m: fc.m, im: fc.im, kind: fc.kind, prop: fc.prop,
-        ax: fc.fax * 0.3, az: fc.faz * 0.3, fallT: 0.24,
-        state: 'table', tier: 'bottom', _q: 0
-      };
-      this.coins.push(c);
-      return c;
-    },
-
     // freefall integration, called with real dt from the render loop.
     stepFall: function (dt) {
-      // Trim the coins on their way down BEFORE the pass: shifting inside a
-      // reverse loop skips the coin that slid into the vacated slot and
-      // integrates it twice. Nothing lands in a tray any more, but a burst of
-      // payouts still must not spawn an unbounded number of shadow casters.
+      // Trim the paid coins on their way down BEFORE the pass: shifting inside
+      // a reverse loop skips the coin that slid into the vacated slot and
+      // integrates it twice. Nothing lands in a tray, but a burst of payouts
+      // still must not spawn an unbounded number of shadow casters.
       var paidFalling = 0;
       for (var p = 0; p < this.fall.length; p++) {
         if (this.fall[p].state === 'falling') paidFalling++;
@@ -559,15 +553,10 @@
         c.fx += c.fvx * dt;
         c.fax += c.fvy * 0.4;
 
-        if (c.state === 'shuttle') {
-          if (c.fy <= BOT.y + 0.004) { this._land(c); this.fall.splice(i, 1); }
-          continue;
-        }
-
         // Once a coin is over the front edge there is nothing to catch it: paid
         // and lost coins both ride the same arc all the way down to the room
         // floor, sit there for the dwell so the player sees where it went, then
-        // are gone. Nothing stops at the old tray height any more.
+        // are gone.
         if (c.fy <= FLOOR_Y) {
           c.fy = FLOOR_Y;
           if (c.fvy < 0) c.fvy = 0;
@@ -584,15 +573,15 @@
       return h;
     },
 
-    countTier: function (tier) {
-      var n = 0;
-      for (var i = 0; i < this.coins.length; i++) if (this.coins[i].tier === tier) n++;
-      return n;
-    },
-
     countProps: function () {
       var n = 0;
       for (var i = 0; i < this.coins.length; i++) if (this.coins[i].kind === 'prop') n++;
+      return n;
+    },
+
+    countOnPlate: function () {
+      var n = 0;
+      for (var i = 0; i < this.coins.length; i++) if (this.onPlate(this.coins[i])) n++;
       return n;
     },
 
@@ -611,25 +600,22 @@
     var s = Object.create(Sim);
     s.coins = []; s.fall = []; s.grid = new Grid(0.11); s._q = [];
     s.nextId = 1; s.t = 0;
-    s.front = { top: TOP.plate.back, bottom: BOT.plate.back };
-    s.vel = { top: 0, bottom: 0 };
+    s.front = DECK.plate.back; s.vel = 0; s.dFront = 0;
     s.rng = makeRng(1); s.busy = false;
     s.stats = blankStats();
-    s._parkPlates();
-    s.onPayout = null; s.onBigPayout = null; s.onLost = null; s.onShuttle = null;
+    s._parkPlate();
+    s.onPayout = null; s.onBigPayout = null; s.onLost = null;
     return s;
   };
 
   Sim.COIN_R = COIN_R; Sim.STEP = STEP;
   Sim.MAX_COINS = MAX_COINS; Sim.MAX_LAYER = MAX_LAYER;
-  Sim.DECKS = DECKS; Sim.TOP = TOP; Sim.BOTTOM = BOT;
+  Sim.DECK = DECK; Sim.DECKS = DECKS; Sim.TOP = TOP; Sim.BOTTOM = BOT;
   Sim.TABLE = TABLE; Sim.PLATE = PLATE;
-  // FLOOR_Y is the real destination. TRAY_Y stays exported as an alias so the
-  // older tools (viewprobe, the probe()) and render code keep resolving, but
-  // nothing lands on a tray any more.
   Sim.DROP_Z = DROP_Z; Sim.FLOOR_Y = FLOOR_Y; Sim.TRAY_Y = FLOOR_Y;
   Sim.TRAY_DWELL = TRAY_DWELL; Sim.TRAY_FADE = TRAY_FADE;
   Sim.PAY_W = PAY_W; Sim.GRAV = GRAV;
+  Sim.PLATE_DROP = PLATE_DROP; Sim.RIDE = RIDE;
   Sim.makeRng = makeRng;
   Sim.clamp = clamp;
   G.Sim = Sim;

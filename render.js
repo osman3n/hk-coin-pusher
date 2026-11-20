@@ -1013,10 +1013,10 @@ function buildRoom() {
     return env;
   }
 
-  // A soft warm ellipse painted just behind each deck, so the coin piles are
-  // lit from behind and read as a cluster rather than scattered dots.
-  function deckBacklight(tier) {
-    var d = G.Sim.DECKS[tier];
+  // A soft warm ellipse painted just behind the deck, so the coin pile is lit
+  // from behind and reads as a cluster rather than as scattered dots.
+  function deckBacklight() {
+    var d = G.Sim.DECK;
     var t = tex(128, 128, function (c, w, h) {
       var gr = c.createRadialGradient(w / 2, h * 0.55, 2, w / 2, h * 0.55, w / 2);
       gr.addColorStop(0, 'rgba(255,255,255,0.85)');
@@ -1032,11 +1032,6 @@ function buildRoom() {
     plane.position.set(0, d.y + 0.02, d.table.z0 - 0.004);
     scene.add(plane);
     return plane;
-  }
-
-  // z of the catch ramp that spans the gap between decks
-  function cascadeRampZ() {
-    return G.Sim.DECKS.top.table.lip + 0.075;
   }
 
 R.init = function (canvas) {
@@ -1080,100 +1075,29 @@ R.init = function (canvas) {
 
     coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, COIN_R * 0.42, 16);
 
-    ['top', 'bottom'].forEach(function (tier) {
-      var tm = buildTable(tier);
-      tableMeshes[tier] = tm;
-      scene.add(tm);
-      var pm = buildPlate(tier);
-      plateMeshes[tier] = pm;
-      scene.add(pm);
-      deckBacklight(tier);
-    });
+    // One deck. Tables and plates are keyed by deck name so the sync pass can
+    // still find them, but there is exactly one of each now.
+    var tm = buildTable('main');
+    tableMeshes.main = tm;
+    scene.add(tm);
+    var pm = buildPlate('main');
+    plateMeshes.main = pm;
+    scene.add(pm);
+    deckBacklight();
 
-    // The frame that carries the upper deck. Without it the top table floats
-    // and the machine reads as two unrelated shelves stacked up.
-    var deckY = G.Sim.DECKS.top.y;
-    var liftMat = M(0x3a281a, 0.78);
-    [-0.60, 0.60].forEach(function (x) {
-      scene.add(box(0.045, deckY + 0.10, 0.055, liftMat, x, deckY / 2 - 0.02, -0.20));
-      scene.add(box(0.045, deckY + 0.10, 0.055, liftMat, x, deckY / 2 - 0.02, -0.44));
-    });
-
-    // Cascade face. The vertical gap between the two decks used to be open to
-    // the back wall, which read as a hole punched through the machine. These
-    // two side panels close the gap and leave a lit mouth in the middle where
-    // the coins actually fall through, so the drop reads as the machine's
-    // mechanism doing something rather than as missing geometry.
-    var cascZ = G.Sim.DECKS.top.table.lip + 0.03;
-    var cascH = deckY - G.Sim.DECKS.bottom.y;
-    var mouthW = 0.40;
-    var cascMat = M(0x4a2f1c, 0.72, 0.12);
+    // The plate travel is the only thing that moves in this machine, so the
+    // frame under it has to read as the slot it slides in. These two skids sit
+    // either side of the plate's stroke and are what the eye uses to tell that
+    // the bar is moving forward rather than the whole table sliding.
+    var skidMat = M(0x241a12, 0.85);
+    var skidZ = (G.Sim.DECK.plate.back + G.Sim.DECK.plate.fwd) / 2;
     [-1, 1].forEach(function (side) {
-      var panelW = 0.62 - mouthW / 2;
-      var px = side * (mouthW / 2 + panelW / 2);
-      scene.add(box(panelW, cascH, 0.035, cascMat, px, deckY - cascH / 2 - 0.01, cascZ));
-      // brass edge on the mouth so the opening is deliberate
-      scene.add(box(0.012, cascH * 0.92, 0.012, M(0xb08a2e, 0.45, 0.5),
-        side * mouthW / 2, deckY - cascH / 2 - 0.01, cascZ + 0.022));
+      scene.add(box(0.022, 0.026, 0.30, skidMat, side * 0.585, -0.006, skidZ));
     });
-    // the deflecting floor of the mouth: a shallow ramp that catches a coin
-    // leaving the upper lip and slides it onto the paying deck
-    var ramp = box(mouthW + 0.02, 0.010, 0.16, M(0x2e2013, 0.8), 0, 0, 0);
-    ramp.position.set(0, deckY - 0.085, cascadeRampZ());
-    ramp.rotation.x = -0.40;
-    scene.add(ramp);
-
-    // ── the chute as a path, not a hole ────────────────────────────────────
-    // Closing the sides was not enough: the mouth itself was a dark rectangle
-    // with a dark ramp in it, so the eye read "hole" and the two decks stayed
-    // two machines stacked on each other. What makes a chute legible is a
-    // surface you can follow -- a lit back, two brass rails converging on the
-    // ramp, and a warm strip down the centre that a falling coin crosses.
-    var chuteBackZ = cascZ - 0.030;
-    var chuteMat = M(0x2b1910, 0.86, 0.04);
-    scene.add(box(mouthW, cascH * 0.94, 0.012, chuteMat, 0, deckY - cascH / 2 - 0.01, chuteBackZ));
-
-    // brass guide rails down either side of the mouth, converging slightly so
-    // the chute has a direction
-    [-1, 1].forEach(function (side) {
-      var rail = box(0.010, cascH * 0.90, 0.010, M(0xb08a2e, 0.40, 0.55),
-        side * (mouthW / 2 - 0.022), deckY - cascH / 2 - 0.01, chuteBackZ + 0.010);
-      rail.rotation.z = side * 0.02;
-      scene.add(rail);
-    });
-
-    // the polished strip the coins actually ride: additive so it glows instead
-    // of sitting there as another brown box
-    var pathTex = tex(64, 64, function (c, w, h) {
-      var gr = c.createLinearGradient(0, 0, 0, h);
-      gr.addColorStop(0, 'rgba(255,214,150,0.95)');
-      gr.addColorStop(0.55, 'rgba(255,170,80,0.35)');
-      gr.addColorStop(1, 'rgba(255,150,60,0)');
-      c.fillStyle = gr; c.fillRect(0, 0, w, h);
-    });
-    var pathMat = new THREE.MeshBasicMaterial({
-      color: 0xffb060, map: pathTex, transparent: true, opacity: 0.42,
-      blending: THREE.AdditiveBlending, depthWrite: false
-    });
-    var chutePath = new THREE.Mesh(new THREE.PlaneGeometry(mouthW * 0.62, cascH * 0.92), pathMat);
-    chutePath.position.set(0, deckY - cascH / 2 - 0.008, chuteBackZ + 0.016);
-    scene.add(chutePath);
-
-    // and a matching wash on the ramp itself, so the light continues past the
-    // lip onto the deck the player is aiming at
-    var rampGlow = new THREE.Mesh(new THREE.PlaneGeometry(mouthW * 0.9, 0.15), pathMat);
-    rampGlow.rotation.x = -Math.PI / 2 + 0.40;
-    rampGlow.position.set(0, deckY - 0.079, cascadeRampZ());
-    scene.add(rampGlow);
-
-    // a warm light inside the mouth: coins moving through it get a rim
-    var mouthLight = new THREE.PointLight(0xffa64d, 0.55, 0.55, 2);
-    mouthLight.position.set(0, deckY - 0.055, cascZ + 0.02);
-    scene.add(mouthLight);
 
     // Interior backdrop. The cabinet shell is a mid brown; coins on it are only
     // a shade lighter, so the whole machine flattened into one value. A dark
-    // inset panel behind the decks gives the gold something to sit against.
+    // inset panel behind the deck gives the gold something to sit against.
     var insetMat = M(0x0e0906, 0.95);
     scene.add(box(1.22, 0.9, 0.012, insetMat, 0, 0.14, -0.435));
 
@@ -1218,7 +1142,7 @@ R.init = function (canvas) {
     [-0.60, 0.00, -0.44], [0.60, 0.00, -0.44],
     [-0.60, 0.00, 0.30], [0.60, 0.00, 0.30],
     [-0.62, 0.10, 0.10], [0.62, 0.10, 0.10],
-    [0.00, 0.46, -0.36],
+    [0.00, 0.34, -0.36],
     [0.00, -0.42, 0.481, 1.06],
     [-0.12, -0.42, 0.485, 1.06], [0.12, -0.42, 0.485, 1.06]
   ];
@@ -1314,9 +1238,9 @@ R.init = function (canvas) {
   R.framing = framing;
 R.room = function () { return roomGroup; };
 
-  function buildTable(tier) {
-    var dk = G.Sim.DECKS[tier];
-    var T = dk.table, y = dk.y;
+  function buildTable() {
+    var D = G.Sim.DECK;
+    var T = D.table, y = D.y;
     var g = new THREE.Group();
     var w = T.x1 - T.x0, d = T.lip - T.z0;
     var zc = (T.z0 + T.lip) / 2;
@@ -1337,15 +1261,25 @@ R.room = function () { return roomGroup; };
     l.castShadow = r.castShadow = true;
     g.add(l); g.add(r);
 
-    // lip: the bar the coins fall over. The lower deck's lip is the payout
-    // edge, so it is brass; the upper deck's is a plain steel rail the coins
-    // tumble over, which reads as "this is not the end of the machine".
+    // The lip, with the payout slot cut out of it. This is the single most
+    // important piece of geometry on the table: it has to make the slot legible
+    // as a hole in an edge, not as a wide-open table that happens to drop coins.
+    // So it is built as two solid brass blocks either side of the slot rather
+    // than one bar across the whole width.
     var lipMat = M(0xd9a441, 0.35, 0.6);
-    var lipThick = tier === 'bottom' ? 0.016 : 0.010;
-    var lip = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, lipThick, lipThick), lipMat);
-    lip.position.set((T.x0 + T.x1) / 2, y + lipThick / 2, T.lip + 0.008);
-    lip.castShadow = true;
-    g.add(lip);
+    var lipThick = 0.018;
+    var slotHalf = G.Sim.PAY_W;
+    var lipW = (T.x1 - T.x0) / 2 + 0.025;
+    var blockW = lipW - slotHalf;
+    [-1, 1].forEach(function (side) {
+      var block = new THREE.Mesh(new THREE.BoxGeometry(blockW, lipThick, lipThick), lipMat);
+      block.position.set(side * (slotHalf + blockW / 2), y + lipThick / 2, T.lip + 0.008);
+      block.castShadow = true;
+      g.add(block);
+    });
+    // The slot floor: a dark drop throat under the gap, so the opening reads as
+    // depth rather than as a painted stripe.
+    g.add(box(slotHalf * 2, 0.004, 0.055, M(0x0a0704, 0.98), 0, y - 0.004, T.lip + 0.030));
 
     // back wall
     var back = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.135, 0.02), railMat);
@@ -1355,18 +1289,33 @@ R.room = function () { return roomGroup; };
     return g;
   }
 
-  function buildPlate(tier) {
-    var T = G.Sim.DECKS[tier].table, y = G.Sim.DECKS[tier].y;
+  function buildPlate() {
+    var D = G.Sim.DECK, T = D.table, y = D.y;
     var g = new THREE.Group();
-    var mat = M(0x7a5a3a, 0.6, 0.25);
+    var drop = G.Sim.PLATE_DROP;
+
+    // The bar is a slab whose TOP FACE sits at exactly `plateDrop`, which is the
+    // height the simulation rests a carried coin at. Anything else and the coins
+    // either sink into the bar or float above it -- and the whole point of this
+    // bar is that a coin visibly lies on it and rides forward.
     var w = T.x1 - T.x0 - 0.03;
-    g.add(box(w, 0.05, 0.012, mat, 0, 0.012, 0));
-    g.add(box(w, 0.02, 0.03, M(0x5a4028, 0.7), 0, 0.032, -0.014));
-    g.add(box(0.03, 0.012, 0.012, M(0xd9a441, 0.4, 0.5), -w / 2 + 0.02, 0.04, 0));
-    g.add(box(0.03, 0.012, 0.012, M(0xd9a441, 0.4, 0.5), w / 2 - 0.02, 0.04, 0));
+    var slab = M(0x8a6540, 0.55, 0.30);
+    g.add(box(w, drop, 0.055, slab, 0, drop / 2, -0.014));
+
+    // A dark seam right along the rib edge, so the boundary between "on the bar"
+    // and "on the felt" is visible as the bar moves.
+    g.add(box(w, drop * 0.55, 0.006, M(0x2c1d13, 0.9), 0, drop * 0.62, 0.013));
+
+    // brass caps on both ends
+    [-1, 1].forEach(function (side) {
+      g.add(box(0.026, drop * 1.15, 0.062, M(0xd9a441, 0.40, 0.55),
+        side * (w / 2 + 0.004), drop * 0.58, -0.014));
+    });
+
     g.position.y = y;
     return g;
   }
+
 
   function buildTray() {
     var g = new THREE.Group();
@@ -1408,40 +1357,53 @@ R.room = function () { return roomGroup; };
     var g = new THREE.Group();
     var T = G.Sim.TABLE;
     var w = 1.30;
+    // One deck means the cabinet is roughly half as tall as it used to be.
+    // Leaving the old two-deck shell here put 200 mm of empty glass above the
+    // felt and made the machine read as broken rather than tall.
+    var hdrY = 0.30;
     // side panels
-    g.add(box(0.035, 0.60, 0.72, M(shell, 0.8), -w / 2, 0.10, -0.06));
-    g.add(box(0.035, 0.60, 0.72, M(shell, 0.8), w / 2, 0.10, -0.06));
+    g.add(box(0.035, 0.52, 0.72, M(shell, 0.8), -w / 2, 0.02, -0.06));
+    g.add(box(0.035, 0.52, 0.72, M(shell, 0.8), w / 2, 0.02, -0.06));
     // back panel
-    g.add(box(w, 0.66, 0.03, M(shell, 0.8), 0, 0.12, -0.44));
+    g.add(box(w, 0.56, 0.03, M(shell, 0.8), 0, 0.02, -0.44));
     // header
-    g.add(box(w, 0.13, 0.04, M(trim, 0.7), 0, 0.46, -0.41));
+    g.add(box(w, 0.11, 0.04, M(trim, 0.7), 0, hdrY, -0.41));
     var signMat = new THREE.MeshStandardMaterial({
       color: 0xffb347, emissive: 0xff9a2e, emissiveIntensity: 0.85, roughness: 0.5
     });
-    g.add(box(0.62, 0.075, 0.01, signMat, 0, 0.46, -0.385));
+    g.add(box(0.62, 0.070, 0.01, signMat, 0, hdrY, -0.385));
     g.add(box(0.60, 0.068, 0.004, plateTex(256, 30, function (c, ww, hh) {
       c.fillStyle = '#1a120a'; c.fillRect(0, 0, ww, hh);
       c.fillStyle = '#ffb347'; c.font = 'bold 19px "Noto Sans HK",serif';
       c.textAlign = 'center'; c.fillText('一蚊雞', ww / 2, 22);
-    }), 0, 0.46, -0.378));
+    }), 0, hdrY, -0.378));
     // base
     g.add(box(w + 0.06, 0.10, 0.80, M(shell, 0.85), 0, -0.18, 0.03));
-    // coin chute
-    // Coin chute. It used to hang in mid-air above the table; now a brass
-    // bracket ties it to the header so it reads as part of the machine.
+    // Coin chute. This used to hang in mid-air under the header, held up by two
+    // thin posts that read as scaffolding in front of the sign. With one deck
+    // there is no room for that, so the chute is now a short spout bolted flat
+    // to the inside of the back panel, angled down at the felt: a coin leaves it
+    // and falls a short arc onto the deck, which is what the sim does anyway.
     var chute = new THREE.Group();
-    chute.add(box(0.24, 0.018, 0.11, M(0x8a8a90, 0.4, 0.6), 0, 0, 0));
-    chute.add(box(0.24, 0.016, 0.010, M(0x6a6a70, 0.5, 0.5), 0, 0.006, -0.055));
-    chute.add(box(0.016, 0.10, 0.016, M(trim, 0.7), -0.11, 0.055, -0.035));
-    chute.add(box(0.016, 0.10, 0.016, M(trim, 0.7),  0.11, 0.055, -0.035));
-    chute.add(box(0.24, 0.014, 0.030, M(trim, 0.7), 0, 0.105, -0.035));
+    var chuteBody = M(0x9a9aa2, 0.42, 0.55);
+    var chuteDark = M(0x5e5e66, 0.55, 0.45);
+    // the spout tube, lying almost flat and tipped down toward the deck
+    chute.add(box(0.20, 0.020, 0.16, chuteBody, 0, 0, 0));
+    // the slot the coin is pushed through
+    chute.add(box(0.13, 0.010, 0.10, M(0x120c06, 0.95), 0, 0.012, 0.010));
+    // side cheeks, so the mouth reads as an opening rather than a plate
+    chute.add(box(0.016, 0.030, 0.16, chuteDark, -0.108, 0.008, 0));
+    chute.add(box(0.016, 0.030, 0.16, chuteDark,  0.108, 0.008, 0));
+    // flange where it meets the back panel
+    chute.add(box(0.24, 0.055, 0.014, M(trim, 0.7), 0, 0.020, -0.082));
     // Sit the chute mouth exactly where Sim.drop() releases the coin, otherwise
     // the drop reads as a coin appearing out of thin air beside the chute. The
     // drop point and the release height are the sim's, not this file's business.
-    var topDeck = G.Sim.TOP || {};
-    var dropZ = (typeof topDeck.dropZ === 'number') ? topDeck.dropZ : -0.36;
-    var dropY = (typeof topDeck.y === 'number' ? topDeck.y : 0.22) + 0.26;
+    var dropZ = G.Sim.DROP_Z;
+    var dropY = G.Sim.DECK.y + G.Sim.PLATE_DROP + 0.26;
     chute.position.set(0, dropY, dropZ);
+    // tip the spout down so its far end points at the felt
+    chute.rotation.x = -0.30;
     g.add(chute);
     return g;
   }
@@ -1554,7 +1516,7 @@ R.room = function () { return roomGroup; };
       // own: the old extra (1 - lift) * 0.35 put the coin 350 mm above the chute
       // it was supposed to be coming out of, which read as a coin appearing in
       // mid-air over the cabinet header. The sim's cy is the whole drop.
-      var deckY = (G.Sim.DECKS[c.tier] || G.Sim.DECKS.bottom).y;
+      var deckY = G.Sim.DECK.y;
       m.position.set(c.x, Math.max(c.cy, deckY) + 0.007, c.z);
       m.rotation.y = c.id * 0.37;
       m.scale.setScalar(c.kind === 'prop' ? 0.001 : 1);
@@ -1580,7 +1542,7 @@ R.room = function () { return roomGroup; };
       // which made h negative and floated every dropped prize half a metre above
       // the chute at a quarter of its size. Read the drop progress off the real
       // height above the deck instead, so no constant from another file matters.
-      var propDeckY = (G.Sim.DECKS[c.tier] || G.Sim.DECKS.bottom).y;
+      var propDeckY = G.Sim.DECK.y;
       var lift = Math.min(1, Math.max(0, (c.cy - propDeckY) / 0.26));
       pm.position.set(c.x, c.cy + 0.006, c.z);
       pm.rotation.y = (c.id * 0.61) % 6.283;
@@ -1672,9 +1634,8 @@ R.room = function () { return roomGroup; };
       }
     }
 
-    // plates, one per deck
-    plateMeshes.top.position.z = sim.front.top;
-    plateMeshes.bottom.position.z = sim.front.bottom;
+    // the bar, following the simulation's rib position
+    plateMeshes.main.position.z = sim.front;
 
     // The landing pools run on their own clock so a paused world still fades
     // them out; they are light on the floor, not a second physics system.

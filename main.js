@@ -49,7 +49,6 @@
     lost: 0,
     drops: 0,
     paid: 0,
-    shuttled: 0,
     started: false
   };
 
@@ -66,7 +65,6 @@
     Sim.onPayout = onPayout;
     Sim.onBigPayout = onBigPayout;
     Sim.onLost = onLost;
-    Sim.onShuttle = onShuttle;
     Sim.seedPile(56 + idx * 4);
     // coins are the wallet and survive an era change; only the table is rebuilt
     UI.setCoins(app.state.coins);
@@ -99,12 +97,12 @@
       var id = order[app.state.nextPropIdx++];
       if (UI.state.collected[id]) continue;
       if (Sim.hasProp(id)) continue;
-      // Prizes live on the lower deck: that is the only deck that pays out,
-      // and a prize on the upper deck would ride down as scrap.
-      var T = Sim.DECKS.bottom.table, by = Sim.DECKS.bottom.y;
+      // Prizes surface near the back of the one deck, so they have the whole
+      // table to be shoved across before they reach the payout slot.
+      var T = Sim.DECK.table, by = Sim.DECK.y;
       var x = T.x0 + 0.10 + Math.random() * (T.x1 - T.x0 - 0.20);
       var z = T.z0 + 0.10 + Math.random() * 0.10;
-      var c = Sim.spawn(x, z, 'prop', id, 'bottom');
+      var c = Sim.spawn(x, z, 'prop', id);
       c.fallT = 0.38; c.cy = by + 0.26;
       var isBig = st.big.indexOf(id) >= 0;
       if (isBig) { UI.say(pick(C.MACHINE.bigFall)); }
@@ -134,18 +132,6 @@
     app.state.lost++;
     UI.tick(app.state.coins);
     if (app.state.lost % 2 === 1) UI.say(pick(C.MACHINE.lost), 1800);
-  }
-
-  // A coin riding the upper deck is not paid, not lost, and used to be silent:
-  // the top deck read as scenery. A dry tick as it leaves, throttled, so a
-  // cascade does not turn into a burst of noise.
-  var lastShuttle = 0;
-  function onShuttle(coin) {
-    app.state.shuttled++;
-    var now = performance.now();
-    if (now - lastShuttle < 55) return;
-    lastShuttle = now;
-    UI.shuttlePing();
   }
 
   function onBigPayout(coin) {
@@ -237,7 +223,6 @@
     app.state.lost = 0;
     app.state.drops = 0;
     app.state.paid = 0;
-    app.state.shuttled = 0;
     // the surface order is cached per stage id; a stale order would keep
     // serving stage-4 props on a 1972 table.
     app.state.order = null;
@@ -255,7 +240,6 @@
     applyStage(0, true);
     UI.setCoins(START_COINS);
     UI.setBigCount(C.STAGES[0]);
-    UI.setTopPile(0);
     if (UI.paintSettings) UI.paintSettings();
     var done = document.getElementById('done');
     if (done) done.classList.remove('on');
@@ -305,7 +289,6 @@
 
     // The upper deck is worth looking at only if it has a number, and the
     // number only has to be right, not fresh: poll it every 16 frames.
-    if ((frameNo++ & 15) === 0) paintTopPile();
 
     R.sync(Sim, dt);
     R.render();
@@ -314,17 +297,13 @@
 
   var frameNo = 0;
 
-  function paintTopPile() {
-    if (UI.setTopPile && Sim.countTier) UI.setTopPile(Sim.countTier('top'));
-  }
-
   // gold while the marker is inside the payout slot, red while it is over the
   // gutter -- the same colour the gutter strips are painted on the table
   var aimInSlot = null;
   function paintAimSlot() {
     var g = app.aimRibbon;
     if (!g || !g.userData || !g.userData.head) return;
-    var payW = (Sim.DECKS && Sim.DECKS.bottom && Sim.DECKS.bottom.payW) || 0.31;
+    var payW = Sim.PAY_W;
     var inSlot = Math.abs(aim.x) <= payW;
     if (inSlot === aimInSlot) return;
     aimInSlot = inSlot;
@@ -433,7 +412,6 @@
     if (loaded) app.state.coins = UI.state.coins || 0;
     if (!loaded || app.state.coins <= 0) app.state.coins = START_COINS;
     applyStage(loaded ? UI.state.stageIdx : 0, loaded);
-    paintTopPile();
 
     // aim ribbon: a thin glowing line above the drop rail
     app.aimRibbon = buildAimRibbon();
@@ -524,11 +502,11 @@
     // of a bad aim used to be invisible until after the fact: the coin left the
     // front edge and became scrap with no warning. Two dim red strips sit over
     // everything outside the payout slot, so the risk is legible while aiming.
-    var bot = (G.Sim.DECKS && G.Sim.DECKS.bottom) || {};
-    var payW = (typeof bot.payW === 'number') ? bot.payW : 0.31;
-    var tw = 0.56;                            // one table half-width
+    var dk = G.Sim.DECK;
+    var payW = dk.payW;
+    var tw = (dk.table.x1 - dk.table.x0) / 2;  // one table half-width
     var gW = tw - payW;                       // width the gutter occupies
-    var gz0 = (bot.table && typeof bot.table.z0 === 'number') ? bot.table.z0 : -0.44;
+    var gz0 = dk.table.z0;
     var gMat = new THREE.MeshBasicMaterial({
       color: 0x8c2f24, transparent: true, opacity: 0.15, depthWrite: false
     });
@@ -555,30 +533,87 @@
   // a gesture that travels is treated as aiming with an explicit second tap
   // to commit -- except on mouse, where the original press-drag-release stands.
   var TAP_SLOP = 14;          // px of travel still counted as a tap
-  var gesture = { id: null, x0: 0, y0: 0, moved: 0, mouse: false };
+  // A hold is a finger that is NOT moving. That needs a much tighter bar than
+  // tap detection does: a thumb resting still wanders a pixel or three, but a
+  // drag crosses this in the first frame, long before HOLD_DELAY could fire.
+  // Sharing TAP_SLOP here was a real bug -- a slow drag crept along under 14 px
+  // per step and fed coins until it finally tripped the slop.
+  var HOLD_SLOP = 6;          // px of travel that disqualifies a hold
+  // Hold to feed. A tap is one coin; pressing and keeping the finger down
+  // streams them, which is how you actually play a pusher once the deck is
+  // loaded and you are trying to start an avalanche. The delay is long enough
+  // that a tap can never be mistaken for a hold, and short enough that holding
+  // does not feel like a wait.
+  var HOLD_DELAY = 240;       // ms of stillness before the stream starts
+  var HOLD_REPEAT = 230;      // ms between coins once it has started
+  var holdTimer = null, holdRepeat = null;
+  var gesture = { id: null, x0: 0, y0: 0, moved: 0, mouse: false, auto: false, dragged: false };
 
   function wireInput() {
     function down(x, y, mouse) {
       if (Sim.busy) return;
       pointer.x = x; pointer.y = y;
       gesture.x0 = x; gesture.y0 = y; gesture.moved = 0; gesture.mouse = !!mouse;
+      gesture.auto = false;
+      gesture.dragged = false;
       aim.dragging = true;
       updateAim(x, y);
+      stopHold();
+      holdTimer = setTimeout(startHold, HOLD_DELAY);
     }
     function move(x, y) {
       pointer.x = x; pointer.y = y;
       if (!aim.dragging) { updateAim(x, y); return; }
       gesture.moved = Math.max(gesture.moved, Math.hypot(x - gesture.x0, y - gesture.y0));
+      // dragging is aiming, not feeding: once it is a drag it can never turn
+      // into a hold, however long the finger then rests
+      if (gesture.moved > HOLD_SLOP) {
+        if (!gesture.auto) { gesture.dragged = true; stopHold(); }
+        else if (gesture.moved > TAP_SLOP) { gesture.dragged = true; stopHold(); }
+      }
       updateAim(x, y);
+    }
+    function stopHold() {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      if (holdRepeat) { clearInterval(holdRepeat); holdRepeat = null; }
+    }
+    // The stream stops itself the moment the machine cannot take another coin,
+    // so a player who holds on an empty wallet does not get a queue of drops
+    // landing after the top-up.
+    function stream() {
+      // A prize card freezes the world. If the player is still holding when one
+      // opens, the stream has to die here rather than resume by itself when the
+      // card closes: coins landing under a card the player is reading is worse
+      // than making them press again.
+      if (gesture.dragged) { stopHold(); gesture.auto = false; return; }
+      if (Sim.busy || !app.state.started) { stopHold(); gesture.auto = false; return; }
+      if (app.state.coins <= 0) { stopHold(); gesture.auto = false; return; }
+      drop();
+    }
+    function startHold() {
+      holdTimer = null;
+      if (!app.state.started || Sim.busy) return;
+      if (gesture.dragged || gesture.moved > HOLD_SLOP) return;  // it became a drag
+      // the first coin of a hold is immediate: the wait already happened
+      gesture.auto = true;
+      drop();
+      holdRepeat = setInterval(stream, HOLD_REPEAT);
     }
     function up(x, y) {
       if (!aim.dragging) return;
       aim.dragging = false;
+      var wasAuto = gesture.auto;
+      stopHold();
+      gesture.auto = false;
+      gesture.dragged = false;
       if (Sim.busy) return;
       updateAim(x, y);
       // A touch that barely moved is a tap and drops; a touch that dragged is
       // left as a positioned aim, and the player taps again to commit. A mouse
       // drag always drops, because dragging is not how it scrolls anything.
+      // A hold has already been dropping, so releasing it adds nothing: one
+      // gesture must never pay out two coins.
+      if (wasAuto) return;
       if (gesture.mouse || gesture.moved <= TAP_SLOP) drop();
     }
     function updateAim(x, y) {
@@ -607,6 +642,8 @@
     canvas.addEventListener('pointercancel', function (e) {
       gesture.id = null;
       aim.dragging = false;
+      gesture.auto = false;
+      stopHold();
     });
     // A context menu on a long press eats the gesture on Android.
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
@@ -674,12 +711,17 @@
     for (var i = 0; i < 340; i++) s.step(Sim.STEP);
     ok('plate pushes a coin in front of it', c1.z - z0 > 0.02, 'dz=' + (c1.z - z0).toFixed(4));
 
-    // 2. a coin behind the plate at its back position is not pushed
+    // 2. the bar pushes but never drags: a coin sitting on the felt ahead of
+    // the rib must not be pulled backwards on the return stroke.
     var s2 = Sim.create(); s2.reset(8); s2.seedPile(0);
-    var c2 = s2.spawn(0, Sim.TABLE.z0 + 0.02, 'coin');
-    c2.fallT = 0; var z2 = c2.z;
-    for (var j = 0; j < 340; j++) s2.step(Sim.STEP);
-    ok('coin behind plate not pushed', Math.abs(c2.z - z2) < 0.02, 'dz=' + (c2.z - z2).toFixed(4));
+    var c2 = s2.spawn(0, Sim.TABLE.lip - 0.10, 'coin');
+    c2.fallT = 0; var z2 = c2.z, minZ = c2.z;
+    for (var j = 0; j < 340; j++) {
+      s2.step(Sim.STEP);
+      if (c2.state === 'on') minZ = Math.min(minZ, c2.z);
+    }
+    ok('bar never drags a coin backwards', minZ >= z2 - 0.02,
+      'dz=' + (minZ - z2).toFixed(4));
 
     // 3. everything past the lip is paid exactly once
     var s3 = Sim.create(); s3.reset(9); s3.seedPile(0);
@@ -766,7 +808,8 @@
       floorY: Sim.FLOOR_Y,
       props: Sim.countProps(),
       hist: Sim.layerHistogram(),
-      plate: { top: +Sim.front.top.toFixed(3), bottom: +Sim.front.bottom.toFixed(3) },
+      plate: +Sim.front.toFixed(3),
+      onPlate: Sim.countOnPlate(),
       stats: Sim.stats,
       stage: app.state.stageIdx,
       wallet: app.state.coins,

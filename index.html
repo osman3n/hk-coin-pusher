@@ -77,12 +77,6 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   0%{opacity:0;transform:translateY(4px) scale(.84)}
   100%{opacity:1;transform:none}
 }
-/* 上層 N 枚: the deck that never pays, counted anyway, because a player who
-   cannot see the top pile has no reason to look at the top deck at all. */
-#topPile{margin-top:5px;font-size:9.5px;letter-spacing:.1em;color:var(--faint);
-  font-variant-numeric:tabular-nums}
-#topPile b{font-weight:600;color:var(--dim)}
-
 #bottom{padding:0 16px max(14px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px}
 #bigWrap{display:flex;align-items:center;gap:10px;pointer-events:auto;min-width:0}
 #bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto;min-width:0}
@@ -128,8 +122,9 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 /* buttons: one fill, one radius, one height. The row is a control strip, so
    every button in it is the same width -- a 10 px difference reads as a bug,
    not as a hierarchy. */
-.btnRow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;pointer-events:auto}
+.btnRow{display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:8px;pointer-events:auto}
 .btnRow .btn{width:100%;min-width:0}
+.btn.icon{font-size:14px;letter-spacing:.08em;padding:0 6px}
 .btn{pointer-events:auto;font:inherit;font-size:12px;letter-spacing:.1em;color:var(--ink);
   background:var(--rise);border:1px solid var(--line);border-radius:var(--r-sm);
   padding:9px 14px;min-height:42px;cursor:pointer;
@@ -204,6 +199,9 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .ovTitle{font-size:12px;letter-spacing:.22em;color:var(--dim)}
 .ovBody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
   touch-action:pan-y;min-height:0}
+
+.ovHead .btn{padding:8px 11px;min-height:40px;font-size:11px}
+@media (max-width:400px){ .ovTitle{font-size:11px;letter-spacing:.14em} }
 
 #museumGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;
   padding-bottom:8px}
@@ -387,7 +385,6 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   #coinsLbl{font-size:10px}
   #coinBox{top:max(7px,env(safe-area-inset-top));padding:4px 11px 5px;gap:4px}
   #combo{font-size:10px;padding-left:6px}
-  #topPile{font-size:9px;margin-top:4px}
   #bottom{padding:0 max(10px,env(safe-area-inset-right)) max(9px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));gap:6px}
   #bigRow{gap:5px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;
     /* a half-clipped chip reads as broken; fade the edge so it reads as "more this way" */
@@ -461,7 +458,6 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   #machine{max-width:min(420px,52vw);font-size:10px;padding:6px 9px}
   #brand small{display:none}
   #hint{display:none}
-  #topPile{display:none}
   #coins{font-size:22px}
   #coinBox{top:max(6px,env(safe-area-inset-top));padding:3px 10px 4px}
   .btn{min-height:40px;font-size:11px;padding:0 11px}
@@ -508,20 +504,19 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   <div id="top">
     <div id="brand">一蚊雞<small>COIN PUSHER HK</small></div>
     <div id="coinBox"><div id="coins">0</div><div id="coinsLbl">蚊</div><div id="combo" hidden></div></div>
-    <div id="stageBox"><div id="stageName">清潔．隧道</div><div id="year">1972</div><div id="topPile" hidden></div></div>
+    <div id="stageBox"><div id="stageName">清潔．隧道</div><div id="year">1972</div></div>
   </div>
 
   <div id="bottom">
     <div id="bigWrap"><div id="bigRow"></div><div id="bigCount"></div></div>
     <div id="machine"></div>
-    <div id="hint">拖 · 選位　放 · 落銀</div>
+    <div id="hint">按住 · 連續落銀　拖 · 選位</div>
     <div class="btnRow">
-      <button class="btn" id="museumBtn">博物館</button>
-      <button class="btn" id="settingsBtn">設定</button>
       <button class="btn slap" id="slapBtn" aria-label="拍機，仲有 3 次，滿 3 次">
         <span class="slapRow"><span class="slapLbl">拍機</span><span class="slapN" id="slapN" aria-hidden="true">3/3</span></span>
         <span class="slapMeter" aria-hidden="true"><i class="slapFill" id="slapFill"></i></span>
       </button>
+      <button class="btn icon" id="museumBtn" aria-label="博物館">櫃</button>
     </div>
   </div>
 </div>
@@ -545,6 +540,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 <div class="ov" id="museum">
   <div class="ovHead">
     <div class="ovTitle" id="museumTitle">香港嘢博物館</div>
+    <button class="btn" id="museumSettings">設定</button>
     <button class="btn" id="museumClose">返去</button>
   </div>
   <div id="museumTabs" hidden>
