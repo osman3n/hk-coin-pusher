@@ -6,7 +6,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
 const PORT = 9000 + Math.floor(Math.random() * 900);
-const url = 'https://osman3n.github.io/hk-coin-pusher/?selftest';
+// Local by default: a deployed URL silently tests whatever was pushed last,
+// which is how a stale suite reports PASS for code that no longer exists.
+// Override with GAME_URL= to check the live page on purpose.
+const BASE = process.env.GAME_URL || 'file:///C:/Users/osman_lam/Projects/WebGame/Coin%20Pusher/index.html';
+const url = BASE + (BASE.includes('?') ? '&' : '?') + 'selftest';
 const proc = spawn(SHELL, ['--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
   '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
   `--remote-debugging-port=${PORT}`, '--window-size=1280,800', 'about:blank'], { stdio: 'ignore' });

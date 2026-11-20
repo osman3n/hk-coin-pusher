@@ -9,7 +9,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
-const PAGE = 'https://osman3n.github.io/hk-coin-pusher/';
+// Local by default; set GAME_URL= to test the deployed build on purpose.
+const PAGE = process.env.GAME_URL || 'file:///C:/Users/osman_lam/Projects/WebGame/Coin%20Pusher/index.html';
 const PORT = 9000 + Math.floor(Math.random() * 900);
 const proc = spawn(SHELL, [
   '--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
@@ -133,7 +134,20 @@ note('scroll', scroll);
 await send('Emulation.setDeviceMetricsOverride', {
   width: 844, height: 390, deviceScaleFactor: 3, mobile: true, screenWidth: 844, screenHeight: 390
 }, sessionId);
-await sleep(900);
+/* The relayout is debounced (resize 0 ms, visualViewport 120 ms,
+   orientationchange 220 ms) and the first resize can land before the emulation
+   override settles. A fixed sleep raced it; poll until the aspect actually
+   changes, then give it one more frame to finish the projection. */
+async function waitAspect(want, ceilingMs) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ceilingMs) {
+    const a = Number(await evaluate('+window.R.camera.aspect.toFixed(3)'));
+    if (Math.abs(a - want) < 0.02) { await sleep(120); return true; }
+    await sleep(80);
+  }
+  return false;
+}
+await waitAspect(844 / 390, 4000);
 const land = JSON.parse(await evaluate(`JSON.stringify((function(){
   var R=window.R, THREE=window.THREE, cam=R.camera;
   var worst=0;
@@ -149,7 +163,7 @@ note('landscapeRefit', land);
 await send('Emulation.setDeviceMetricsOverride', {
   width: 390, height: 844, deviceScaleFactor: 3, mobile: true, screenWidth: 390, screenHeight: 844
 }, sessionId);
-await sleep(900);
+await waitAspect(390 / 844, 4000);
 const port = JSON.parse(await evaluate(`JSON.stringify({aspect:+window.R.camera.aspect.toFixed(3),portrait:window.R.framing.portrait})`));
 note('portraitRefit', port);
 

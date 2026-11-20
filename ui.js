@@ -111,8 +111,11 @@
   };
 
   // ── stage chrome ───────────────────────────────────────────────────────
+  UI.stage = function () { return state.stage; };
+
   UI.setStage = function (stage, idx) {
     state.stageIdx = idx;
+    state.stage = stage;
     els.year.textContent = stage.year;
     els.stageName.textContent = stage.name;
     document.body.style.setProperty('--gold',
@@ -122,15 +125,33 @@
 
   function renderBigChips(stage) {
     els.bigRow.innerHTML = '';
-    stage.big.forEach(function (id) {
+    // Every collectible in the stage, not only the three big ones. The six
+    // small props were collectable and were silently unusable: showCard()
+    // tried to light up a chip that renderBigChips never created, so a player
+    // who won 垃圾蟲 saw a card, then nothing anywhere that remembered it.
+    var all = stage.big.concat(stage.small);
+    all.forEach(function (id) {
       var def = C.PROPS[id];
+      if (!def) return;
+      var isBig = stage.big.indexOf(id) >= 0;
       var d = document.createElement('div');
-      d.className = 'chip' + (state.collected[id] ? ' got' : '');
+      d.className = 'chip' + (state.collected[id] ? ' got' : '') + (isBig ? ' big' : '');
       d.dataset.id = id;
       d.innerHTML = '<span class="dot"></span><span>' + def.name + '</span>';
       els.bigRow.appendChild(d);
     });
+    UI.setBigCount(stage);
   }
+
+  // "2 / 9" so the row says how much of the stage is left, not just which
+  // chips happen to be lit.
+  UI.setBigCount = function (stage) {
+    var el = $('bigCount');
+    if (!el) return;
+    var all = stage.big.concat(stage.small);
+    var got = all.filter(function (id) { return !!state.collected[id]; }).length;
+    el.textContent = got + ' / ' + all.length;
+  };
 
   UI.setCoins = function (n) {
     state.coins = n;
@@ -181,7 +202,16 @@
       state.collected[propId] = true;
       state.found.push(propId);
       var chip = els.bigRow.querySelector('[data-id="' + propId + '"]');
-      if (chip) chip.classList.add('got');
+      if (chip) {
+        chip.classList.add('got', 'justgot');
+        // scroll the newly won chip into view: on a phone the row is a
+        // horizontal strip and the item you just earned can be off-screen
+        try { chip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' }); } catch (e) {}
+        // drop the pulse class afterwards so a second win can replay it
+        setTimeout(function () { chip.classList.remove('justgot'); }, 950);
+      }
+      var st = UI.stage && UI.stage();
+      if (st) UI.setBigCount(st);
     }
     $('cardName').textContent = def.name;
     $('cardJyut').textContent = def.jyut || '';

@@ -92,11 +92,13 @@
       var id = order[app.state.nextPropIdx++];
       if (UI.state.collected[id]) continue;
       if (Sim.hasProp(id)) continue;
-      var T = Sim.TABLE;
+      // Prizes live on the lower deck: that is the only deck that pays out,
+      // and a prize on the upper deck would ride down as scrap.
+      var T = Sim.DECKS.bottom.table, by = Sim.DECKS.bottom.y;
       var x = T.x0 + 0.10 + Math.random() * (T.x1 - T.x0 - 0.20);
       var z = T.z0 + 0.10 + Math.random() * 0.10;
-      var c = Sim.spawn(x, z, 'prop', id);
-      c.fallT = 0.38; c.cy = 0.55;
+      var c = Sim.spawn(x, z, 'prop', id, 'bottom');
+      c.fallT = 0.38; c.cy = by + 0.26;
       var isBig = st.big.indexOf(id) >= 0;
       if (isBig) { UI.say(pick(C.MACHINE.bigFall)); }
       return c;
@@ -526,7 +528,7 @@
       trayY: Sim.TRAY_Y,
       props: Sim.countProps(),
       hist: Sim.layerHistogram(),
-      plate: +Sim.plateFront.toFixed(3),
+      plate: { top: +Sim.front.top.toFixed(3), bottom: +Sim.front.bottom.toFixed(3) },
       stats: Sim.stats,
       stage: app.state.stageIdx,
       wallet: app.state.coins,
@@ -555,7 +557,25 @@
       surface: maybeSurfaceProp,
       stage: function () { return stage(); },
       state: app.state,
-      applyStage: applyStage
+      applyStage: applyStage,
+      // Deterministic fast-forward: run the real step/payout/callback path
+      // without waiting for requestAnimationFrame. Headless swiftshader renders
+      // at ~4 fps, so a 40 s wall-clock bot run only advances ~9 s of sim --
+      // less than a few plate strokes. This seam drives the same code the
+      // frame loop does, just at test speed.
+      advance: function (seconds, opts) {
+        opts = opts || {};
+        var every = opts.every || 1.2;
+        var acc2 = 0, nextDrop = 0, t = 0, guard = 0;
+        while (t < seconds && guard++ < 400000) {
+          if (opts.dropAt != null && t >= nextDrop) { aim.x = opts.dropAt; drop(); nextDrop += every; }
+          Sim.step(Sim.STEP);
+          t += Sim.STEP; acc2 += Sim.STEP;
+          if (acc2 >= 1 / 60) { Sim.stepFall(acc2); acc2 = 0; }
+        }
+        if (acc2 > 0) Sim.stepFall(acc2);
+        return { t: +Sim.t.toFixed(2), stats: JSON.parse(JSON.stringify(Sim.stats)) };
+      }
     };
   }
 

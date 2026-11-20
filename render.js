@@ -847,7 +847,8 @@
   R.PROP_BUILD = B;
 
   // ── scene ──────────────────────────────────────────────────────────────
-  var scene, renderer, camera, cabinetGroup, tableMesh, plateMesh, trayGroup;
+  var scene, renderer, camera, cabinetGroup, trayGroup;
+  var tableMeshes = {}, plateMeshes = {};
   var coinMeshes = [], fallMeshes = [], propMeshes = new Map();
   var coinGeo, propRoot = new THREE.Group();
 
@@ -867,6 +868,7 @@
    40% void above and below the cabinet. A dim tiled floor + wall vignette turns
    that void into a room the machine stands in. */
 var roomGroup = null;
+  var envMap = null;
 function buildRoom() {
   roomGroup = new THREE.Group();
   roomGroup.name = 'room';
@@ -890,11 +892,65 @@ function buildRoom() {
     roomGroup.add(sz);
   }
 
-  // Back wall, far behind the cabinet, so the top of a portrait screen is not empty.
-  var wallMat = new THREE.MeshStandardMaterial({ color: 0x120f0d, roughness: 0.95, metalness: 0.02 });
+  /* Portrait leaves a tall band above the cabinet. A floor running to a far
+   wall reads as an empty warehouse there; what fills it is the rest of the
+   arcade -- the shop behind this one. A nearer back wall with a roller shutter,
+   a hanging sign and two pendant lamps turn that band into a street. */
+  var wallMat = new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: 0.95, metalness: 0.02 });
   var wall = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), wallMat);
-  wall.position.set(0, 1.6, -2.2);
+  wall.position.set(0, 1.6, -1.55);
   roomGroup.add(wall);
+
+  /* Everything below sits in the band between the machine's header and the
+   HUD. It has to stay under the HUD's contrast or the top of a portrait screen
+   turns into clutter behind the title: dark values, no small text, no bright
+   emitters pointed at the eye. */
+  var slatMat = new THREE.MeshStandardMaterial({ color: 0x1f1915, roughness: 0.75, metalness: 0.22 });
+  for (var sIdx = 0; sIdx < 12; sIdx++) {
+    var sl = new THREE.Mesh(new THREE.BoxGeometry(1.60, 0.050, 0.012), slatMat);
+    sl.position.set(0, 0.02 + sIdx * 0.058, -1.53);
+    roomGroup.add(sl);
+  }
+  var shutterFrame = new THREE.Mesh(new THREE.BoxGeometry(1.70, 0.72, 0.018), M(0x100c08, 0.9));
+  shutterFrame.position.set(0, 0.34, -1.545);
+  roomGroup.add(shutterFrame);
+
+  // One pendant lamp off to the side, well below the HUD band. Two symmetric
+  // lamps read as a designed fixture; one reads as a shop that has been there
+  // for years and never quite matched its fittings.
+  // The lamp hangs tight under the header, in the gap between the title and the
+  // cabinet top. Any higher and a portrait screen crops its cord, which reads
+  // as a floating cone rather than a fixture.
+  var lampX = -0.60;
+  var cordTop = 0.62, cordLen = 0.16;
+  var cord = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, cordLen, 6), M(0x0c0906, 1.0));
+  cord.position.set(lampX, cordTop - cordLen / 2, -1.02);
+  roomGroup.add(cord);
+  var shadeY = cordTop - cordLen;
+  var shade = new THREE.Mesh(new THREE.ConeGeometry(0.062, 0.076, 14, 1, true), M(0x4e3c22, 0.6, 0.4));
+  shade.position.set(lampX, shadeY - 0.038, -1.02);
+  roomGroup.add(shade);
+  var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.019, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffd9a0, emissive: 0xffb057, emissiveIntensity: 1.4 }));
+  bulb.position.set(lampX, shadeY - 0.062, -1.02);
+  roomGroup.add(bulb);
+  var glow = new THREE.PointLight(0xffb057, 0.26, 1.3, 2);
+  glow.position.set(lampX, shadeY - 0.08, -1.02);
+  roomGroup.add(glow);
+
+  // A hand-painted shop sign on the shutter, small and dim. It is the detail
+  // that says "this is a shop", and it is deliberately too small to read at a
+  // glance -- a portrait screen should not hand you a second title to parse.
+  var signTex = tex(256, 64, function (c, w, h) {
+    c.fillStyle = '#0d0a07'; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#6b5024'; c.font = 'bold 22px "Noto Sans HK",serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('通宵營業', w / 2, h / 2 + 1);
+  });
+  var sign = new THREE.Mesh(new THREE.PlaneGeometry(0.30, 0.075),
+    new THREE.MeshBasicMaterial({ map: signTex, transparent: true, opacity: 0.55 }));
+  sign.position.set(0.30, 0.34, -1.52);
+  roomGroup.add(sign);
 
   // A single warm spill from the machine's own lighting, painted on the floor.
   var spillTex = tex(128, 128, function (c, w, h) {
@@ -917,6 +973,69 @@ function buildRoom() {
   return roomGroup;
 }
 
+  /* Metals need something to reflect. With no environment map a gold coin at
+   metalness 0.85 has nothing to sample and renders as flat mud, which is
+   exactly what the first build looked like. This paints a tiny equirect room
+   (warm ceiling lamp, dark floor, one cool side bounce) and feeds it through
+   PMREM so every metal in the scene picks up a believable gradient. */
+  function buildEnvironment() {
+    var W = 256, H = 128;
+    var c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    var x = c.getContext('2d');
+    var sky = x.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0.00, '#2a2016');
+    sky.addColorStop(0.40, '#5a4630');
+    sky.addColorStop(0.52, '#241a12');
+    sky.addColorStop(1.00, '#0a0806');
+    x.fillStyle = sky; x.fillRect(0, 0, W, H);
+    var lamp = x.createRadialGradient(W * 0.30, H * 0.26, 2, W * 0.30, H * 0.26, W * 0.34);
+    lamp.addColorStop(0, 'rgba(255,238,205,1)');
+    lamp.addColorStop(0.35, 'rgba(255,190,110,0.55)');
+    lamp.addColorStop(1, 'rgba(255,170,80,0)');
+    x.fillStyle = lamp; x.fillRect(0, 0, W, H);
+    var cool = x.createRadialGradient(W * 0.82, H * 0.55, 2, W * 0.82, H * 0.55, W * 0.26);
+    cool.addColorStop(0, 'rgba(150,190,255,0.42)');
+    cool.addColorStop(1, 'rgba(120,160,230,0)');
+    x.fillStyle = cool; x.fillRect(0, 0, W, H);
+
+    var et = new THREE.CanvasTexture(c);
+    et.mapping = THREE.EquirectangularReflectionMapping;
+    et.colorSpace = THREE.SRGBColorSpace;
+    var pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    var env = pmrem.fromEquirectangular(et).texture;
+    et.dispose();
+    pmrem.dispose();
+    return env;
+  }
+
+  // A soft warm ellipse painted just behind each deck, so the coin piles are
+  // lit from behind and read as a cluster rather than scattered dots.
+  function deckBacklight(tier) {
+    var d = G.Sim.DECKS[tier];
+    var t = tex(128, 128, function (c, w, h) {
+      var gr = c.createRadialGradient(w / 2, h * 0.55, 2, w / 2, h * 0.55, w / 2);
+      gr.addColorStop(0, 'rgba(255,255,255,0.85)');
+      gr.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gr; c.fillRect(0, 0, w, h);
+    });
+    var mat = new THREE.MeshBasicMaterial({
+      color: 0xff9a3c, map: t, transparent: true, opacity: 0.16,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var plane = new THREE.Mesh(new THREE.PlaneGeometry(1.24, 0.62), mat);
+    plane.position.set(0, d.y + 0.02, d.table.z0 - 0.004);
+    scene.add(plane);
+    return plane;
+  }
+
+  // z of the catch ramp that spans the gap between decks
+  function cascadeRampZ() {
+    return G.Sim.DECKS.top.table.lip + 0.075;
+  }
+
 R.init = function (canvas) {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
@@ -927,6 +1046,9 @@ R.init = function (canvas) {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b0a08);
     scene.fog = new THREE.Fog(0x0b0a08, 2.2, 4.4);
+    envMap = buildEnvironment();
+    scene.environment = envMap;
+    scene.environmentIntensity = 0.55;
 
     camera = new THREE.PerspectiveCamera(42, 1, 0.05, 12);
     placeCamera(1);
@@ -955,11 +1077,58 @@ R.init = function (canvas) {
 
     coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, COIN_R * 0.42, 16);
 
-    tableMesh = buildTable();
-    scene.add(tableMesh);
+    ['top', 'bottom'].forEach(function (tier) {
+      var tm = buildTable(tier);
+      tableMeshes[tier] = tm;
+      scene.add(tm);
+      var pm = buildPlate(tier);
+      plateMeshes[tier] = pm;
+      scene.add(pm);
+      deckBacklight(tier);
+    });
 
-    plateMesh = buildPlate();
-    scene.add(plateMesh);
+    // The frame that carries the upper deck. Without it the top table floats
+    // and the machine reads as two unrelated shelves stacked up.
+    var deckY = G.Sim.DECKS.top.y;
+    var liftMat = M(0x3a281a, 0.78);
+    [-0.60, 0.60].forEach(function (x) {
+      scene.add(box(0.045, deckY + 0.10, 0.055, liftMat, x, deckY / 2 - 0.02, -0.20));
+      scene.add(box(0.045, deckY + 0.10, 0.055, liftMat, x, deckY / 2 - 0.02, -0.44));
+    });
+
+    // Cascade face. The vertical gap between the two decks used to be open to
+    // the back wall, which read as a hole punched through the machine. These
+    // two side panels close the gap and leave a lit mouth in the middle where
+    // the coins actually fall through, so the drop reads as the machine's
+    // mechanism doing something rather than as missing geometry.
+    var cascZ = G.Sim.DECKS.top.table.lip + 0.03;
+    var cascH = deckY - G.Sim.DECKS.bottom.y;
+    var mouthW = 0.40;
+    var cascMat = M(0x4a2f1c, 0.72, 0.12);
+    [-1, 1].forEach(function (side) {
+      var panelW = 0.62 - mouthW / 2;
+      var px = side * (mouthW / 2 + panelW / 2);
+      scene.add(box(panelW, cascH, 0.035, cascMat, px, deckY - cascH / 2 - 0.01, cascZ));
+      // brass edge on the mouth so the opening is deliberate
+      scene.add(box(0.012, cascH * 0.92, 0.012, M(0xb08a2e, 0.45, 0.5),
+        side * mouthW / 2, deckY - cascH / 2 - 0.01, cascZ + 0.022));
+    });
+    // the deflecting floor of the mouth: a shallow ramp that catches a coin
+    // leaving the upper lip and slides it onto the paying deck
+    var ramp = box(mouthW + 0.02, 0.010, 0.16, M(0x2e2013, 0.8), 0, 0, 0);
+    ramp.position.set(0, deckY - 0.085, cascadeRampZ());
+    ramp.rotation.x = -0.40;
+    scene.add(ramp);
+    // a warm light inside the mouth: coins moving through it get a rim
+    var mouthLight = new THREE.PointLight(0xffa64d, 0.55, 0.55, 2);
+    mouthLight.position.set(0, deckY - 0.055, cascZ + 0.02);
+    scene.add(mouthLight);
+
+    // Interior backdrop. The cabinet shell is a mid brown; coins on it are only
+    // a shade lighter, so the whole machine flattened into one value. A dark
+    // inset panel behind the decks gives the gold something to sit against.
+    var insetMat = M(0x0e0906, 0.95);
+    scene.add(box(1.22, 0.9, 0.012, insetMat, 0, 0.14, -0.435));
 
     buildRoom();
     trayGroup = buildTray();
@@ -1046,41 +1215,49 @@ R.init = function (canvas) {
   R.framing = framing;
 R.room = function () { return roomGroup; };
 
-  function buildTable() {
+  function buildTable(tier) {
+    var dk = G.Sim.DECKS[tier];
+    var T = dk.table, y = dk.y;
     var g = new THREE.Group();
-    var T = G.Sim.TABLE;
     var w = T.x1 - T.x0, d = T.lip - T.z0;
-    var felt = new THREE.MeshStandardMaterial({ color: 0x1c2a24, roughness: 0.95 });
+    var zc = (T.z0 + T.lip) / 2;
+
+    // The felt has to be dark enough that a gold coin pops, but not so dark
+    // that the deck reads as a hole in the machine.
+    var felt = new THREE.MeshStandardMaterial({ color: 0x14201c, roughness: 0.92 });
     var top = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), felt);
-    top.position.set((T.x0 + T.x1) / 2, -0.01, (T.z0 + T.lip) / 2);
+    top.position.set((T.x0 + T.x1) / 2, y - 0.01, zc);
     top.receiveShadow = true;
     g.add(top);
 
     // side rails
-    var railMat = M(0x4a3220, 0.75);
+    var railMat = M(0x3d2717, 0.7);
     var sideGeo = new THREE.BoxGeometry(0.025, 0.055, d);
-    var l = new THREE.Mesh(sideGeo, railMat); l.position.set(T.x0 - 0.012, 0.017, (T.z0 + T.lip) / 2);
-    var r = new THREE.Mesh(sideGeo, railMat); r.position.set(T.x1 + 0.012, 0.017, (T.z0 + T.lip) / 2);
+    var l = new THREE.Mesh(sideGeo, railMat); l.position.set(T.x0 - 0.012, y + 0.017, zc);
+    var r = new THREE.Mesh(sideGeo, railMat); r.position.set(T.x1 + 0.012, y + 0.017, zc);
     l.castShadow = r.castShadow = true;
     g.add(l); g.add(r);
 
-    // lip: the bar the coins fall over
+    // lip: the bar the coins fall over. The lower deck's lip is the payout
+    // edge, so it is brass; the upper deck's is a plain steel rail the coins
+    // tumble over, which reads as "this is not the end of the machine".
     var lipMat = M(0xd9a441, 0.35, 0.6);
-    var lip = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.016, 0.016), lipMat);
-    lip.position.set((T.x0 + T.x1) / 2, 0.008, T.lip + 0.008);
+    var lipThick = tier === 'bottom' ? 0.016 : 0.010;
+    var lip = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, lipThick, lipThick), lipMat);
+    lip.position.set((T.x0 + T.x1) / 2, y + lipThick / 2, T.lip + 0.008);
     lip.castShadow = true;
     g.add(lip);
 
     // back wall
     var back = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.135, 0.02), railMat);
-    back.position.set(0, 0.055, T.z0 - 0.012);
+    back.position.set(0, y + 0.055, T.z0 - 0.012);
     back.castShadow = back.receiveShadow = true;
     g.add(back);
     return g;
   }
 
-  function buildPlate() {
-    var T = G.Sim.TABLE;
+  function buildPlate(tier) {
+    var T = G.Sim.DECKS[tier].table, y = G.Sim.DECKS[tier].y;
     var g = new THREE.Group();
     var mat = M(0x7a5a3a, 0.6, 0.25);
     var w = T.x1 - T.x0 - 0.03;
@@ -1088,6 +1265,7 @@ R.room = function () { return roomGroup; };
     g.add(box(w, 0.02, 0.03, M(0x5a4028, 0.7), 0, 0.032, -0.014));
     g.add(box(0.03, 0.012, 0.012, M(0xd9a441, 0.4, 0.5), -w / 2 + 0.02, 0.04, 0));
     g.add(box(0.03, 0.012, 0.012, M(0xd9a441, 0.4, 0.5), w / 2 - 0.02, 0.04, 0));
+    g.position.y = y;
     return g;
   }
 
@@ -1107,17 +1285,17 @@ R.room = function () { return roomGroup; };
     var gold     = M(0xd9a441, 0.42, 0.55);
 
     // basin floor, slightly below the lip so coins drop INTO it
-    g.add(box(1.16, 0.014, 0.30, floorMat, 0, -0.088, 0.46));
+    g.add(box(1.16, 0.014, 0.22, floorMat, 0, -0.088, 0.42));
     // back wall of the basin: the visible face of the payout slot
     g.add(box(1.16, 0.075, 0.014, wallMat, 0, -0.052, lip + 0.006));
     // the mouth: cut the centre out of the back wall with the dark throat
     g.add(box(slotW, 0.062, 0.020, M(0x120c06, 0.95), 0, -0.050, lip + 0.004));
     // side walls
-    g.add(box(0.014, 0.085, 0.30, wallMat, -0.578, -0.052, 0.46));
-    g.add(box(0.014, 0.085, 0.30, wallMat,  0.578, -0.052, 0.46));
+    g.add(box(0.014, 0.085, 0.22, wallMat, -0.578, -0.052, 0.42));
+    g.add(box(0.014, 0.085, 0.22, wallMat,  0.578, -0.052, 0.42));
     // low front lip: 45 mm, low enough to see the pile over
-    g.add(box(1.16, 0.045, 0.014, wallMat, 0, -0.072, 0.606));
-    g.add(box(1.16, 0.006, 0.016, gold, 0, -0.051, 0.606));
+    g.add(box(1.16, 0.045, 0.014, wallMat, 0, -0.072, 0.532));
+    g.add(box(1.16, 0.006, 0.016, gold, 0, -0.051, 0.532));
 
     // brass cheeks framing the mouth
     var cheekW = (1.16 - slotW) / 2;
@@ -1128,8 +1306,10 @@ R.room = function () { return roomGroup; };
     g.add(box(slotW + 0.018, 0.007, 0.030, M(0xf0c869, 0.30, 0.85), 0, -0.010, lip + 0.008));
 
     // warm glow inside the basin
-    var lamp = new THREE.PointLight(0xffb057, 0.20, 0.42, 2);
-    lamp.position.set(0, 0.02, 0.40);
+    // The basin light is deliberately weak: at 0.20 it lit the empty floor
+    // brighter than it lit a landing coin, so the tray read as a glowing hole.
+    var lamp = new THREE.PointLight(0xffb057, 0.11, 0.34, 2);
+    lamp.position.set(0, 0.03, 0.38);
     g.add(lamp);
     return g;
   }
@@ -1184,7 +1364,8 @@ R.room = function () { return roomGroup; };
       c = coins[i]; m = coinMeshes[i];
       m.visible = true;
       var lift = c.fallT > 0 ? (1 - c.fallT / 0.30) : 1;
-      m.position.set(c.x, Math.max(c.cy, 0) + (c.fallT > 0 ? (1 - lift) * 0.35 : 0) + 0.007, c.z);
+      var deckY = (G.Sim.DECKS[c.tier] || G.Sim.DECKS.bottom).y;
+      m.position.set(c.x, Math.max(c.cy, deckY) + (c.fallT > 0 ? (1 - lift) * 0.35 : 0) + 0.007, c.z);
       m.rotation.y = c.id * 0.37;
       m.scale.setScalar(c.kind === 'prop' ? 0.001 : 1);
     }
@@ -1242,10 +1423,11 @@ R.room = function () { return roomGroup; };
         if (fc.fy <= (G.Sim.TRAY_Y || -0.081) + 0.002 && fc.kind === 'coin') {
           fm2.coin.rotation.x *= 0.75; fm2.coin.rotation.z *= 0.75;
         }
-        // fade the last third of a paid coin's dwell so it does not pop
+        // fade the tail of a paid coin's dwell so it does not pop out
         var age = fc.age || 0;
-        var dwell = G.Sim.TRAY_DWELL || 6.0;
-        var o = age > dwell - 0.6 ? Math.max(0, 1 - (age - (dwell - 0.6)) / 0.6) : 1;
+        var dwell = G.Sim.TRAY_DWELL || 1.9;
+        var fade = G.Sim.TRAY_FADE || 0.5;
+        var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
       } else {
         fm2.coin.visible = false;
@@ -1253,8 +1435,9 @@ R.room = function () { return roomGroup; };
       }
     }
 
-    // plate
-    plateMesh.position.z = sim.plateFront;
+    // plates, one per deck
+    plateMeshes.top.position.z = sim.front.top;
+    plateMeshes.bottom.position.z = sim.front.bottom;
   };
 
   R.buildProp = function (id) {
@@ -1310,7 +1493,7 @@ R.room = function () { return roomGroup; };
   // ── thumbnails for cards and the museum ────────────────────────────────
   // One shared renderer for every thumbnail. Creating a renderer per prop
   // burns a WebGL context each time and Chrome kills the page at ~16.
-  var thumbRenderer = null, thumbScene, thumbCam, thumbCache = {};
+  var thumbRenderer = null, thumbScene, thumbCam, thumbLight, thumbCache = {};
   R.thumb = function (id) {
     if (thumbCache[id]) return thumbCache[id];
     if (!thumbRenderer) {
@@ -1328,6 +1511,7 @@ R.room = function () { return roomGroup; };
       var rim2 = new THREE.DirectionalLight(0x8fb8ff, 0.8);
       rim2.position.set(0.8, 0.3, -0.6);
       thumbScene.add(rim2);
+      if (envMap) { thumbScene.environment = envMap; thumbScene.environmentIntensity = 0.55; }
     }
     var g = R.buildProp(id);
     var def = G.CONTENT.PROPS[id];

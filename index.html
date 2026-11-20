@@ -37,13 +37,34 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 #coinsLbl{font-size:9px;letter-spacing:.28em;color:var(--dim);margin-top:4px}
 
 #bottom{padding:0 16px max(16px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
-#bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto}
+#bigWrap{display:flex;align-items:center;gap:10px;pointer-events:auto;min-width:0}
+#bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto;min-width:0}
+#bigCount{font-size:11px;letter-spacing:.14em;color:var(--gold);flex:0 0 auto;
+  font-variant-numeric:tabular-nums;padding:4px 9px;border:1px solid rgba(217,164,65,.28);
+  border-radius:999px;background:rgba(11,10,8,.72)}
 .chip{display:flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);
   border-radius:999px;background:rgba(11,10,8,.66);backdrop-filter:blur(8px);font-size:12px;
   color:var(--dim);transition:.25s}
 .chip .dot{width:7px;height:7px;border-radius:50%;background:#3a342c;transition:.25s}
-.chip.got{border-color:rgba(217,164,65,.6);color:var(--ink);background:rgba(217,164,65,.12)}
-.chip.got .dot{background:var(--gold);box-shadow:0 0 10px var(--gold)}
+.chip.got{border-color:rgba(232,182,74,.92);color:#fff3d6;background:rgba(217,164,65,.22)}
+.chip.big{border-style:dashed}
+.chip.big.got{border-style:solid;box-shadow:0 0 16px rgba(232,182,74,.42)}
+.chip.got .dot{background:var(--gold);box-shadow:0 0 12px var(--gold)}
+/* the moment of collecting: one short pulse, then it settles */
+@keyframes chipPop{
+  0%{transform:scale(1)}
+  35%{transform:scale(1.14)}
+  100%{transform:scale(1)}
+}
+@keyframes chipGlow{
+  0%{box-shadow:0 0 0 rgba(232,182,74,0)}
+  40%{box-shadow:0 0 26px rgba(232,182,74,.75)}
+  100%{box-shadow:0 0 16px rgba(232,182,74,.42)}
+}
+.chip.justgot{animation:chipPop .42s cubic-bezier(.34,1.56,.64,1), chipGlow .9s ease-out}
+@media (prefers-reduced-motion:reduce){
+  .chip.justgot{animation:none}
+}
 
 #machine{font-size:13px;line-height:1.55;color:var(--ink);max-width:min(560px,86vw);
   background:rgba(11,10,8,.62);border-left:2px solid var(--gold);padding:9px 13px;
@@ -132,7 +153,11 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   #coinsLbl{font-size:8px;letter-spacing:.22em}
   #coinBox{top:max(10px,env(safe-area-inset-top))}
   #bottom{padding:0 max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));gap:7px}
-  #bigRow{gap:5px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  #bigRow{gap:5px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    /* a half-clipped chip reads as broken; fade the edge so it reads as "more this way" */
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%);
+    mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%)}
+  #bigCount{font-size:9px;letter-spacing:.10em;padding:3px 7px}
   #bigRow::-webkit-scrollbar{display:none}
   .chip{flex:0 0 auto;padding:5px 9px;font-size:10px;gap:5px}
   .chip .dot{width:6px;height:6px}
@@ -184,7 +209,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   </div>
 
   <div id="bottom">
-    <div id="bigRow"></div>
+    <div id="bigWrap"><div id="bigRow"></div><div id="bigCount"></div></div>
     <div id="machine"></div>
     <div id="hint">拖 · 選位　放 · 落銀</div>
     <div class="btnRow">
