@@ -456,8 +456,9 @@
      * upright bars either side of the case, which read as a buckle, not a
      * wrist. Lay the strap flat and let the module sit proud of it.
      */
-    var case_ = M(0x1e1e22, 0.42, 0.35), strap = M(0x2a2a30, 0.72), glass = M(0x2a3a2e, 0.16);
+    var case_ = M(0x4a4a54, 0.36, 0.45), strap = M(0x39393f, 0.70), glass = M(0x1e2a20, 0.16);
     g.add(box(0.052, 0.034, 0.013, case_, 0, 0.017, 0));              // module body
+    g.add(box(0.054, 0.004, 0.015, M(0xb8b8c0, 0.28, 0.75), 0, 0.0335, 0)); // chrome bezel
     g.add(box(0.040, 0.021, 0.003, glass, 0, 0.018, 0.0068));         // window
     g.add(box(0.030, 0.013, 0.0015, plateTex(64, 32, function (c, w, h) {
       c.fillStyle = '#0e2014'; c.fillRect(0, 0, w, h);
@@ -590,19 +591,24 @@
     var g = new THREE.Group();
     // The beeper is a clip-on box with a screen on one end, not a remote
     // control: the clip is the silhouette that identifies it.
-    g.add(box(0.048, 0.030, 0.084, M(0x1e1e24, 0.5), 0, 0.015, 0));           // body
-    g.add(box(0.048, 0.006, 0.086, M(0x14141a, 0.6), 0, 0.033, 0));           // top shell
-    g.add(box(0.034, 0.004, 0.024, M(0x0d0d12, 0.3), 0, 0.0345, 0.026));      // screen
+    /* A near-black beeper against a near-black backdrop has no silhouette.
+     * The 1990s case was charcoal with a lighter faceplate, and that two-tone
+     * edge is what makes it read as an object rather than a smudge.
+     */
+    g.add(box(0.048, 0.030, 0.084, M(0x3c3c46, 0.44), 0, 0.015, 0));          // body
+    g.add(box(0.042, 0.004, 0.070, M(0x585864, 0.40, 0.15), 0, 0.0305, 0.002)); // faceplate
+    g.add(box(0.048, 0.006, 0.086, M(0x2a2a34, 0.55), 0, 0.033, 0));          // top shell
+    g.add(box(0.034, 0.005, 0.026, M(0x16161c, 0.35), 0, 0.0355, 0.024));     // bezel
     g.add(box(0.030, 0.002, 0.018, plateTex(64, 40, function (c, w, h) {
       c.fillStyle = '#0d1a0d'; c.fillRect(0, 0, w, h);
       c.fillStyle = '#6fdc7a'; c.font = 'bold 13px monospace'; c.textAlign = 'center';
       c.fillText('998', w / 2, 16);
       c.font = '7px monospace'; c.fillStyle = '#4a9a52';
       c.fillText('CALL', w / 2, 30);
-    }), 0, 0.0363, 0.026));                                                  // LCD
-    g.add(box(0.010, 0.004, 0.004, M(0x3a3a44, 0.5), -0.012, 0.0355, 0.044)); // button
-    g.add(box(0.046, 0.040, 0.006, M(0x2a2a32, 0.55), 0, 0.018, -0.044));      // clip back
-    g.add(box(0.046, 0.008, 0.030, M(0x2a2a32, 0.55), 0, 0.040, -0.030));      // clip arm
+    }), 0, 0.0378, 0.024));                                                  // LCD
+    g.add(box(0.010, 0.004, 0.004, M(0x8a8a96, 0.45, 0.20), -0.012, 0.0355, 0.044)); // button
+    g.add(box(0.046, 0.040, 0.006, M(0x4a4a56, 0.50), 0, 0.018, -0.044));      // clip back
+    g.add(box(0.046, 0.008, 0.030, M(0x4a4a56, 0.50), 0, 0.040, -0.030));      // clip arm
     return g;
   };
   B.octopus = function () {
@@ -2044,6 +2050,10 @@ R.room = function () { return roomGroup; };
   // One shared renderer for every thumbnail. Creating a renderer per prop
   // burns a WebGL context each time and Chrome kills the page at ~16.
   var thumbRenderer = null, thumbScene, thumbCam, thumbLight, thumbCache = {};
+  var THUMB_DIST = 0.38;      // camera distance; 0.232 of frame height is visible
+  var THUMB_MID = 0.060;      // models are centred here vertically
+  var THUMB_SPAN = 0.150;     // longest dimension after normalising
+
   R.thumb = function (id) {
     if (thumbCache[id]) return thumbCache[id];
     if (!thumbRenderer) {
@@ -2052,8 +2062,13 @@ R.room = function () { return roomGroup; };
       thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
       thumbScene = new THREE.Scene();
       thumbCam = new THREE.PerspectiveCamera(34, 1, 0.05, 8);
-      thumbCam.position.set(0.26, 0.30, 0.44);
-      thumbCam.lookAt(0, 0.085, 0);
+      /* Distance and target are tied to THUMB_MID / THUMB_SPAN below. The old
+       * fixed aim at y=0.085 made every flat prop (watch, pager, card) sit
+       * below the centre of its own cell, so it read as a small smear.
+       */
+      var dir = new THREE.Vector3(0.4387, 0.5062, 0.7425);
+      thumbCam.position.copy(dir.multiplyScalar(THUMB_DIST));
+      thumbCam.lookAt(0, THUMB_MID, 0);
       thumbLight = new THREE.DirectionalLight(0xfff2dd, 2.4);
       thumbLight.position.set(-0.4, 0.9, 0.7);
       thumbScene.add(thumbLight);
@@ -2084,13 +2099,16 @@ R.room = function () { return roomGroup; };
       var size = new THREE.Vector3(), ctr = new THREE.Vector3();
       bb.getSize(size); bb.getCenter(ctr);
       var span = Math.max(size.x, size.y, size.z * 1.3, 0.001);
-      g.scale.setScalar(0.145 / span);
-      // re-measure after scaling so the object is centred, not its origin
+      g.scale.setScalar(THUMB_SPAN / span);
+      /* Re-measure after scaling and centre all three axes. Dropping the base
+       * on y=0 was only right for objects about as tall as they are wide; a
+       * 30 mm watch ended up at the bottom edge of the cell.
+       */
       bb.setFromObject(g);
       bb.getCenter(ctr);
       g.position.x -= ctr.x;
       g.position.z -= ctr.z;
-      g.position.y -= bb.min.y;
+      g.position.y += THUMB_MID - ctr.y;
     }
     thumbScene.add(g);
     thumbRenderer.render(thumbScene, thumbCam);
