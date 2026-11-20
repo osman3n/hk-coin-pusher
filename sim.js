@@ -66,11 +66,14 @@
   var DROP_Z = TOP.dropZ;
   var PAY_W = BOT.payW;
 
-  // top of the tray floor: a paid coin comes to rest here, not through it
-  var TRAY_Y = -0.081;
-  // A paid coin rests this long so the win registers, then it is gone. Six
-  // seconds of clutter read as a bug; the player wants the table back.
-  var TRAY_DWELL = 1.9;
+  // The room floor in front of the machine. There is no payout basin: a coin
+  // that leaves the lower deck falls down the front of the cabinet and stops
+  // here, on the same plane the room floor is drawn on in render.js buildRoom()
+  // (floor.position.y = -0.42). The floor is the destination, not a tray.
+  var FLOOR_Y = -0.42;
+  // A landed coin lies on the floor this long so the payout registers, then it
+  // is gone. The floor is not a shelf, and lingering clutter reads as a bug.
+  var TRAY_DWELL = 0.9;
   var TRAY_FADE = 0.5;
   var MAX_TRAY = 18;
   var MAX_COINS = 480, MAX_LAYER = 12;
@@ -533,17 +536,19 @@
 
     // freefall integration, called with real dt from the render loop.
     stepFall: function (dt) {
-      // Trim the tray BEFORE the pass: shifting inside a reverse loop skips
-      // the coin that slid into the vacated slot and integrates it twice.
-      var paidOnTray = 0;
+      // Trim the coins on their way down BEFORE the pass: shifting inside a
+      // reverse loop skips the coin that slid into the vacated slot and
+      // integrates it twice. Nothing lands in a tray any more, but a burst of
+      // payouts still must not spawn an unbounded number of shadow casters.
+      var paidFalling = 0;
       for (var p = 0; p < this.fall.length; p++) {
-        if (this.fall[p].state === 'falling') paidOnTray++;
+        if (this.fall[p].state === 'falling') paidFalling++;
       }
-      while (paidOnTray > MAX_TRAY) {
+      while (paidFalling > MAX_TRAY) {
         for (var s2 = 0; s2 < this.fall.length; s2++) {
           if (this.fall[s2].state === 'falling') { this.fall.splice(s2, 1); break; }
         }
-        paidOnTray--;
+        paidFalling--;
       }
       for (var i = this.fall.length - 1; i >= 0; i--) {
         var c = this.fall[i];
@@ -559,18 +564,17 @@
           continue;
         }
 
-        if (c.state === 'falling') {
-          // tray floor: stop, then fade out
-          if (c.fy <= TRAY_Y) {
-            c.fy = TRAY_Y;
-            c.fvy = 0;
-            c.fvx *= 0.82; c.fvz *= 0.82;
-            c.fax *= 0.86;
-          }
-          if (c.age > TRAY_DWELL) this.fall.splice(i, 1);
-        } else if (c.fy < -0.55) {
-          this.fall.splice(i, 1);
+        // Once a coin is over the front edge there is nothing to catch it: paid
+        // and lost coins both ride the same arc all the way down to the room
+        // floor, sit there for the dwell so the player sees where it went, then
+        // are gone. Nothing stops at the old tray height any more.
+        if (c.fy <= FLOOR_Y) {
+          c.fy = FLOOR_Y;
+          if (c.fvy < 0) c.fvy = 0;
+          c.fvx *= 0.82; c.fvz *= 0.82;
+          c.fax *= 0.86;
         }
+        if (c.age > TRAY_DWELL) this.fall.splice(i, 1);
       }
     },
 
@@ -620,7 +624,10 @@
   Sim.MAX_COINS = MAX_COINS; Sim.MAX_LAYER = MAX_LAYER;
   Sim.DECKS = DECKS; Sim.TOP = TOP; Sim.BOTTOM = BOT;
   Sim.TABLE = TABLE; Sim.PLATE = PLATE;
-  Sim.DROP_Z = DROP_Z; Sim.TRAY_Y = TRAY_Y;
+  // FLOOR_Y is the real destination. TRAY_Y stays exported as an alias so the
+  // older tools (viewprobe, the probe()) and render code keep resolving, but
+  // nothing lands on a tray any more.
+  Sim.DROP_Z = DROP_Z; Sim.FLOOR_Y = FLOOR_Y; Sim.TRAY_Y = FLOOR_Y;
   Sim.TRAY_DWELL = TRAY_DWELL; Sim.TRAY_FADE = TRAY_FADE;
   Sim.PAY_W = PAY_W; Sim.GRAV = GRAV;
   Sim.makeRng = makeRng;

@@ -1148,14 +1148,32 @@ R.init = function (canvas) {
   // look-at target and is pulled back just far enough that every interesting
   // point lands inside a safe frame (the HUD eats the top and bottom).
   var CAM_TARGET = new THREE.Vector3(0, 0.06, 0.02);
-  // corners of the playing surface, the cabinet shoulders, the tray lip and
-  // the mouth of the drop chute -- if these are visible the game is readable
+  // corners of the playing surface, the cabinet shoulders, the mouth of the
+  // drop chute, and the patch of room floor a paid coin actually lands on. If
+  // these are visible the game is readable.
+  //
+  // The landing patch is now a real gameplay point (coins fall to the floor
+  // instead of a tray) and it is the lowest thing in the picture, so it alone
+  // decides how much empty floor the frame carries below the machine. A fourth
+  // number scales how much of the safe band that point may use: above 1 pushes
+  // it towards the edge of the frame, which crops the floor beyond it. The
+  // numbers come from the landing census, not from taste: over 262 dropped
+  // coins every one touched down at z 0.481-0.490 inside |x| 0.10, so there is
+  // nothing worth framing past z ~0.49 and no reason to reserve room for it.
+  // 1.06 is measured, not tuned by feel: it pulls the frame in until a coin
+  // resting on the patch still clears the bottom edge by ~30 px (both its face
+  // and the torch shadow under it), where 1.14 left it 3 px from being cut. The
+  // gain is 2.174 -> 2.087 of camera distance, i.e. the machine reads ~4%
+  // larger and the empty band under the cabinet base drops from 19% to 18% of
+  // the frame. Pushing further buys single pixels of floor and starts cropping
+  // coins, so this is the stop.
   var FIT_POINTS = [
     [-0.60, 0.00, -0.44], [0.60, 0.00, -0.44],
     [-0.60, 0.00, 0.30], [0.60, 0.00, 0.30],
-    [-0.62, 0.12, 0.10], [0.62, 0.12, 0.10],
-    [0.00, -0.09, 0.64],
-    [0.00, 0.12, -0.34]
+    [-0.62, 0.10, 0.10], [0.62, 0.10, 0.10],
+    [0.00, 0.46, -0.36],
+    [0.00, -0.42, 0.481, 1.06],
+    [-0.12, -0.42, 0.485, 1.06], [0.12, -0.42, 0.485, 1.06]
   ];
   var camDir = new THREE.Vector3(0, 0.5655, 0.8249);
   var framing = { dist: 1.6976, aspect: 1, pitch: 0.6, portrait: false };
@@ -1183,14 +1201,16 @@ R.init = function (canvas) {
 
     var d = 1.0;
     for (var i = 0; i < FIT_POINTS.length; i++) {
-      var a = new THREE.Vector3(FIT_POINTS[i][0], FIT_POINTS[i][1], FIT_POINTS[i][2])
-        .sub(CAM_TARGET);
+      var fp = FIT_POINTS[i];
+      // a point may claim more than the base safe band (see FIT_POINTS)
+      var band = fp.length > 3 ? fp[3] : 1;
+      var a = new THREE.Vector3(fp[0], fp[1], fp[2]).sub(CAM_TARGET);
       var depth0 = a.dot(view);       // depth at zero distance
       var xc = Math.abs(a.dot(right));
       var yc = Math.abs(a.dot(up));
       d = Math.max(d,
-        xc / (tanH * safeX) - depth0,
-        yc / (tanV * safeY) - depth0);
+        xc / (tanH * safeX * band) - depth0,
+        yc / (tanV * safeY * band) - depth0);
     }
     d = Math.max(1.25, Math.min(6.0, d));
 
@@ -1274,28 +1294,25 @@ R.room = function () { return roomGroup; };
     var lip = G.Sim.TABLE.lip;
     var slotW = (G.Sim.PAY_W || 0.30) * 2;
 
-    // The tray is where the player finally sees the coin they earned. It was a
-    // black slab, so every payout fell through it and vanished -- the whole
-    // aiming mechanic had no visible consequence. Now it is a lit basin: a
-    // floor, two side walls, a low front lip that you can see over, and a warm
-    // light underneath so a landing coin glints.
+    // There is no payout basin any more. A coin that clears the lower deck keeps
+    // falling down the front of the machine and lands on the room floor, so the
+    // tray floor, its side walls, the front lip and the little basin lamp are all
+    // gone. What is left is the payout mouth in the cabinet face -- the dark
+    // throat the coins come out of, framed by two brass cheeks and a gold lintel.
+    // That has to stay: the player still needs somewhere to aim at.
 
-    var floorMat = M(0x241a11, 0.72, 0.12);
     var wallMat  = M(0x2e2116, 0.8);
     var gold     = M(0xd9a441, 0.42, 0.55);
 
-    // basin floor, slightly below the lip so coins drop INTO it
-    g.add(box(1.16, 0.014, 0.22, floorMat, 0, -0.088, 0.42));
-    // back wall of the basin: the visible face of the payout slot
+    // back wall of the mouth: the visible face of the payout slot
     g.add(box(1.16, 0.075, 0.014, wallMat, 0, -0.052, lip + 0.006));
     // the mouth: cut the centre out of the back wall with the dark throat
     g.add(box(slotW, 0.062, 0.020, M(0x120c06, 0.95), 0, -0.050, lip + 0.004));
-    // side walls
-    g.add(box(0.014, 0.085, 0.22, wallMat, -0.578, -0.052, 0.42));
-    g.add(box(0.014, 0.085, 0.22, wallMat,  0.578, -0.052, 0.42));
-    // low front lip: 45 mm, low enough to see the pile over
-    g.add(box(1.16, 0.045, 0.014, wallMat, 0, -0.072, 0.532));
-    g.add(box(1.16, 0.006, 0.016, gold, 0, -0.051, 0.532));
+    // the throat is a hole, so give it a dark back and sides: without the basin
+    // behind it you would see straight through the machine
+    g.add(box(slotW, 0.062, 0.055, M(0x0a0704, 0.98), 0, -0.050, lip - 0.030));
+    // 30 mm shelf under the mouth, so the slot sits in a face instead of floating
+    g.add(box(1.16, 0.030, 0.030, M(0x241a11, 0.85), 0, -0.100, lip + 0.012));
 
     // brass cheeks framing the mouth
     var cheekW = (1.16 - slotW) / 2;
@@ -1305,12 +1322,6 @@ R.room = function () { return roomGroup; };
     }
     g.add(box(slotW + 0.018, 0.007, 0.030, M(0xf0c869, 0.30, 0.85), 0, -0.010, lip + 0.008));
 
-    // warm glow inside the basin
-    // The basin light is deliberately weak: at 0.20 it lit the empty floor
-    // brighter than it lit a landing coin, so the tray read as a glowing hole.
-    var lamp = new THREE.PointLight(0xffb057, 0.11, 0.34, 2);
-    lamp.position.set(0, 0.03, 0.38);
-    g.add(lamp);
     return g;
   }
 
@@ -1345,7 +1356,13 @@ R.room = function () { return roomGroup; };
     chute.add(box(0.016, 0.10, 0.016, M(trim, 0.7), -0.11, 0.055, -0.035));
     chute.add(box(0.016, 0.10, 0.016, M(trim, 0.7),  0.11, 0.055, -0.035));
     chute.add(box(0.24, 0.014, 0.030, M(trim, 0.7), 0, 0.105, -0.035));
-    chute.position.set(0, G.Sim.DROP_Z * 0 + 0.30, -0.30);
+    // Sit the chute mouth exactly where Sim.drop() releases the coin, otherwise
+    // the drop reads as a coin appearing out of thin air beside the chute. The
+    // drop point and the release height are the sim's, not this file's business.
+    var topDeck = G.Sim.TOP || {};
+    var dropZ = (typeof topDeck.dropZ === 'number') ? topDeck.dropZ : -0.36;
+    var dropY = (typeof topDeck.y === 'number' ? topDeck.y : 0.22) + 0.26;
+    chute.position.set(0, dropY, dropZ);
     g.add(chute);
     return g;
   }
@@ -1363,9 +1380,13 @@ R.room = function () { return roomGroup; };
     for (i = 0; i < coins.length; i++) {
       c = coins[i]; m = coinMeshes[i];
       m.visible = true;
-      var lift = c.fallT > 0 ? (1 - c.fallT / 0.30) : 1;
+      // Sim.drop() already spawns the coin at the chute mouth (cy = TOP.y + 0.26)
+      // and eases it down to the pile, so this must NOT add a fall arc of its
+      // own: the old extra (1 - lift) * 0.35 put the coin 350 mm above the chute
+      // it was supposed to be coming out of, which read as a coin appearing in
+      // mid-air over the cabinet header. The sim's cy is the whole drop.
       var deckY = (G.Sim.DECKS[c.tier] || G.Sim.DECKS.bottom).y;
-      m.position.set(c.x, Math.max(c.cy, deckY) + (c.fallT > 0 ? (1 - lift) * 0.35 : 0) + 0.007, c.z);
+      m.position.set(c.x, Math.max(c.cy, deckY) + 0.007, c.z);
       m.rotation.y = c.id * 0.37;
       m.scale.setScalar(c.kind === 'prop' ? 0.001 : 1);
     }
@@ -1384,11 +1405,18 @@ R.room = function () { return roomGroup; };
         propMeshes.set(c.id, pm);
       }
       pm.visible = true;
-      var h = c.fallT > 0 ? (1 - c.fallT / 0.30) : 1;
-      pm.position.set(c.x, c.cy + (c.fallT > 0 ? (1 - h) * 0.4 : 0) + 0.006, c.z);
+      // Same story as the coins above: the sim's cy already starts at the chute
+      // mouth and eases down onto the pile, so this must not add a second arc.
+      // The old code divided by 0.30, but props spawn with fallT 0.38 (main.js),
+      // which made h negative and floated every dropped prize half a metre above
+      // the chute at a quarter of its size. Read the drop progress off the real
+      // height above the deck instead, so no constant from another file matters.
+      var propDeckY = (G.Sim.DECKS[c.tier] || G.Sim.DECKS.bottom).y;
+      var lift = Math.min(1, Math.max(0, (c.cy - propDeckY) / 0.26));
+      pm.position.set(c.x, c.cy + 0.006, c.z);
       pm.rotation.y = (c.id * 0.61) % 6.283;
       var s = c.r / 0.11;
-      pm.scale.setScalar(Math.min(1.5, Math.max(0.7, s)) * (h < 1 ? 0.4 + h * 0.6 : 1));
+      pm.scale.setScalar(Math.min(1.5, Math.max(0.7, s)) * (0.86 + 0.14 * (1 - lift)));
     }
     propMeshes.forEach(function (pm, id) {
       if (!live.has(id)) { pm.visible = false; }
@@ -1406,26 +1434,56 @@ R.room = function () { return roomGroup; };
       if (i < fall.length) {
         var fc = fall[i];
         fm2.coin.visible = fc.kind === 'coin';
+        // There is no basin: a coin or prop that leaves the lower deck falls all
+        // the way to the room floor and only then stops being worth drawing.
+        var floorY = (G.Sim.FLOOR_Y || -0.42);
+        // "On the floor" is the sim's own landing test, so the pose and the
+        // height switch on exactly the frame the sim says the fall is over.
+        var onFloor = fc.fy <= floorY + 0.002;
+        // A coin's half thickness is what has to clear the tiles once it lies
+        // flat: CylinderGeometry(COIN_R, COIN_R, COIN_R * 0.42) -> COIN_R * 0.21.
+        // Read the radius from sim rather than baking the number in here, so a
+        // retuned coin cannot silently sink again.
+        var coinR = (G.Sim.COIN_R || COIN_R);
+        // A hair of stagger keeps two coins that land on the same spot from
+        // z-fighting. It is a hair, not a bounce.
+        var rest = (fc.id % 5) * 0.0006;
         if (fc.kind === 'prop') {
           if (!fm2.prop) { fm2.prop = R.buildProp(fc.prop); scene.add(fm2.prop); }
           fm2.prop.visible = true;
-          fm2.prop.position.set(fc.fx, fc.fy + 0.006, fc.fz);
-          fm2.prop.rotation.set(fc.fax * 0.35, fc.faz * 0.2, fc.faz * 0.3);
+          // Every prop is modelled standing on its own origin (0 .. +h), so an
+          // upright prop needs almost no lift. On the floor it stands up: the
+          // old code kept the tumble angles and a 6 mm lift, which pushed a
+          // dropped prize through the tiles.
+          if (onFloor) {
+            fm2.prop.position.set(fc.fx, floorY + 0.001 + rest, fc.fz);
+            fm2.prop.rotation.set(0, fc.faz * 0.2, 0);
+          } else {
+            fm2.prop.position.set(fc.fx, fc.fy + 0.006, fc.fz);
+            fm2.prop.rotation.set(fc.fax * 0.35, fc.faz * 0.2, fc.faz * 0.3);
+          }
           fm2.prop.scale.setScalar(Math.min(1.5, Math.max(0.7, fc.r / 0.11)));
         }
-        if (fm2.prop) fm2.prop.visible = fc.kind === 'prop' && fc.fy > -0.55;
-        // Loose coins settle anywhere on the basin floor; a slight y jitter
-        // keeps two coins from z-fighting when they land on the same spot.
-        var jitter = ((fc.id % 7) - 3) * 0.0009;
-        fm2.coin.position.set(fc.fx, fc.fy + 0.007 + Math.abs(jitter), fc.fz);
-        fm2.coin.rotation.set(fc.fax * 0.4, fc.faz * 0.2, fc.faz * 0.3);
-        // a resting coin settles flat; a lost one keeps tumbling out of sight
-        if (fc.fy <= (G.Sim.TRAY_Y || -0.081) + 0.002 && fc.kind === 'coin') {
-          fm2.coin.rotation.x *= 0.75; fm2.coin.rotation.z *= 0.75;
+        if (fm2.prop) fm2.prop.visible = fc.kind === 'prop' && fc.fy > floorY - 0.01 && (fc.age || 0) <= (G.Sim.TRAY_DWELL || 0.9);
+        if (onFloor) {
+          // A landed coin lies FLAT, and the flat pose must not be derived from
+          // the tumble angle. The old `rotation.x *= 0.75` damped a value that
+          // was rebuilt from fc.fax from scratch every frame, so it could never
+          // converge: it held the coin at 75% of its tumble (about -44 deg,
+          // standing on its edge) with half the disc under the tiles. The
+          // cylinder's axis is +Y, so x and z at zero IS the face; only the spin
+          // about Y survives the landing.
+          fm2.coin.rotation.set(0, fc.faz * 0.35, 0);
+          fm2.coin.position.set(fc.fx, floorY + coinR * 0.21 + rest, fc.fz);
+        } else {
+          // Airborne: tumble the whole way down, untouched.
+          var jitter = ((fc.id % 7) - 3) * 0.0009;
+          fm2.coin.position.set(fc.fx, fc.fy + 0.007 + Math.abs(jitter), fc.fz);
+          fm2.coin.rotation.set(fc.fax * 0.4, fc.faz * 0.2, fc.faz * 0.3);
         }
-        // fade the tail of a paid coin's dwell so it does not pop out
+        // fade the tail of a landed coin's dwell so it does not pop out
         var age = fc.age || 0;
-        var dwell = G.Sim.TRAY_DWELL || 1.9;
+        var dwell = G.Sim.TRAY_DWELL || 0.9;
         var fade = G.Sim.TRAY_FADE || 0.5;
         var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
@@ -1454,7 +1512,13 @@ R.room = function () { return roomGroup; };
     return fallMeshes.slice(0, 6).map(function (fm) {
       return {
         v: fm.coin.visible,
-        p: fm.coin.position.toArray().map(function (x) { return +x.toFixed(3); })
+        p: fm.coin.position.toArray().map(function (x) { return +x.toFixed(3); }),
+        r: fm.coin.rotation.toArray().slice(0, 3).map(function (x) { return +x.toFixed(3); }),
+        // a dropped prize settles on the same floor, so it is probed with the
+        // same shape rather than by eye
+        pv: fm.prop ? fm.prop.visible : false,
+        pp: fm.prop ? fm.prop.position.toArray().map(function (x) { return +x.toFixed(3); }) : null,
+        pr: fm.prop ? fm.prop.rotation.toArray().slice(0, 3).map(function (x) { return +x.toFixed(3); }) : null
       };
     });
   };

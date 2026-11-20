@@ -160,9 +160,20 @@
     UI.save();
   };
 
+  // 再推多陣: same stage, and the world has to start again. The done card froze
+  // it (see onBigPayout), so staying used to leave the table unplayable.
+  UI.onStayStage = function () {
+    Sim.busy = false;
+  };
+
   // ── loop ───────────────────────────────────────────────────────────────
   function frame(now) {
-    var dt = Math.min(0.05, (now - lastT) / 1000 || 0.016);
+    var rawDt = (now - lastT) / 1000 || 0.016;
+    // The step loop needs a small, stable dt for physics; the slap recharge is
+    // a wall-clock cooldown and must keep its 4.2 s feel even at 4 fps, so it
+    // reads the unclamped delta (a backgrounded tab simply finishes it).
+    if (!(rawDt > 0) || rawDt > 60) rawDt = 0.016;
+    var dt = Math.min(0.05, rawDt);
     lastT = now;
 
     if (app.state.started) {
@@ -174,6 +185,10 @@
       }
       Sim.stepFall(dt);
     }
+
+    // The recharge runs on wall time: a collect card holds the world still,
+    // but the player should still get their strength back.
+    stepSlap(rawDt);
 
     // aim marker
     if (app.aimRibbon) {
@@ -187,12 +202,61 @@
   }
 
   // ── slap ───────────────────────────────────────────────────────────────
-  var slapBudget = 3, slapReset = 0;
+  // Three charges, each one recharging on its own 4.2 s clock -- the budget is
+  // not dumped back all at once, so an empty button refills visibly. main.js
+  // owns the numbers; ui.js only draws them and already throttles its own DOM
+  // writes, so republishing every frame while short is cheap and never flickers.
+  var SLAP_MAX = 3;
+  var SLAP_COOLDOWN = 4.2;        // seconds to win back one charge
+  var slapBudget = SLAP_MAX;
+  var slapCharge = 0;             // 0..1 progress toward the next charge
+  var slapShown = '';             // last published key, so a full meter is quiet
+
+  function slapRatio() {
+    if (slapBudget >= SLAP_MAX) return 0;
+    return Math.max(0, Math.min(1, slapCharge));
+  }
+
+  // Publish on any change, and unconditionally (once per frame) while short so
+  // the refill bar can actually move. force is for the moment of use.
+  function publishSlap(force) {
+    if (!UI.slapState) return;
+    var left = Math.max(0, Math.min(SLAP_MAX, slapBudget));
+    var ratio = slapRatio();
+    var key = left + ':' + (left > 0 ? '-' : ratio.toFixed(3));
+    if (!force && left >= SLAP_MAX && key === slapShown) return;
+    slapShown = key;
+    UI.slapState({ left: left, max: SLAP_MAX, ratio: ratio });
+  }
+
+  // Advance the recharge by the same clock the frame loop uses. A charge is
+  // promoted the instant its own timer completes; surplus progress carries on
+  // toward the next one instead of being thrown away.
+  function stepSlap(dt) {
+    if (!(dt > 0)) return;
+    if (slapBudget < SLAP_MAX) {
+      slapCharge += dt / SLAP_COOLDOWN;
+      while (slapCharge >= 1 && slapBudget < SLAP_MAX) {
+        slapCharge -= 1;
+        slapBudget++;
+      }
+      if (slapBudget >= SLAP_MAX) slapCharge = 0;
+    } else {
+      slapCharge = 0;
+    }
+    publishSlap(false);
+  }
+
   UI.onSlap = function () {
     if (Sim.busy) return;
-    if (slapBudget <= 0) { UI.say('冇力喇。', 1800); return; }
+    if (slapBudget <= 0) {
+      UI.say('冇力喇。', 1800);
+      publishSlap(true);
+      return;
+    }
     slapBudget--;
-    slapReset = performance.now() + 4200;
+    if (UI.slapFired) UI.slapFired();
+    publishSlap(true);
     UI.say(pick(C.MACHINE.slap), 2200);
     UI.rumble();
     // jolt every coin a little toward the lip
@@ -275,6 +339,9 @@
     // Always expose the probe: it is the only way to prove the game is running
     // from a headless browser, where a screenshot can be a black frame.
     window.__probe = probe;
+    // ui.js paints a placeholder budget until main.js reports in; make the real
+    // numbers the first thing the button ever shows.
+    publishSlap(true);
   }
 
   // The aim marker. It used to be a flat 300 mm plate lying at rail height,
@@ -525,7 +592,7 @@
       coins: Sim.coins.length,
       fall: Sim.fall.length,
       fallY: Sim.fall.slice(0, 3).map(function (c) { return +c.fy.toFixed(3); }),
-      trayY: Sim.TRAY_Y,
+      floorY: Sim.FLOOR_Y,
       props: Sim.countProps(),
       hist: Sim.layerHistogram(),
       plate: { top: +Sim.front.top.toFixed(3), bottom: +Sim.front.bottom.toFixed(3) },
@@ -535,6 +602,14 @@
       drops: app.state.drops,
       collected: Object.keys(UI.state.collected).length,
       started: app.state.started,
+      // The shake meter is the one HUD number a screenshot can lie about, so
+      // the probe reports the numbers ui.js is actually being fed.
+      slap: {
+        left: slapBudget,
+        max: SLAP_MAX,
+        ratio: +slapRatio().toFixed(3),
+        cooldownMs: Math.round(SLAP_COOLDOWN * 1000)
+      },
       input: {
         aimX: +aim.x.toFixed(3),
         dragging: aim.dragging,
@@ -570,11 +645,19 @@
         while (t < seconds && guard++ < 400000) {
           if (opts.dropAt != null && t >= nextDrop) { aim.x = opts.dropAt; drop(); nextDrop += every; }
           Sim.step(Sim.STEP);
+          // Fast-forward is real time compressed, so the shake meter recharges
+          // with it; otherwise a headless run would show a dead button forever.
+          stepSlap(Sim.STEP);
           t += Sim.STEP; acc2 += Sim.STEP;
           if (acc2 >= 1 / 60) { Sim.stepFall(acc2); acc2 = 0; }
         }
         if (acc2 > 0) Sim.stepFall(acc2);
         return { t: +Sim.t.toFixed(2), stats: JSON.parse(JSON.stringify(Sim.stats)) };
+      },
+      // Press 拍機 through the same handler the button uses.
+      slap: function () { UI.onSlap(); },
+      slapState: function () {
+        return { left: slapBudget, max: SLAP_MAX, ratio: +slapRatio().toFixed(3) };
       }
     };
   }

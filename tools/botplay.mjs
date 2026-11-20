@@ -114,7 +114,7 @@ try {
       return JSON.stringify({
         t: +(performance.now()/1000).toFixed(0),
         wallet: p.wallet, paid: p.stats.paid, lost: p.stats.lost,
-        fall: p.fall, fallY: p.fallY, trayY: p.trayY,
+        fall: p.fall, fallY: p.fallY, floorY: p.floorY,
         props: p.props, collected: p.collected,
         dbg: window.R && window.R.debugFall ? window.R.debugFall() : null,
         card: document.getElementById('card')?.classList.contains('on'),

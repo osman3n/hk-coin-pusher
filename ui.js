@@ -15,10 +15,30 @@
     coins: 0,
     found: [],          // this stage's collected prop ids in order
     cardOpen: false,
-    onCardClose: null
+    onCardClose: null,
+    mdOpen: false,      // museum detail panel open?
+    mdId: null,         // which prop the panel is showing
+    storySeen: {},      // stage id -> true, so a beat is read once per save
+    storyTab: false     // the museum is showing 故事線 instead of 藏品
   };
 
   UI.state = state;
+
+  function num(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function txt(el, s) { if (el) el.textContent = (s == null ? '' : String(s)); }
+
+  // Restart a one-shot CSS animation even if its class is still on the
+  // element, so two slaps in a row both read as two taps.
+  var flashTimers = {};
+  function flash(el, cls, hold) {
+    if (!el) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;                      // reflow: CSS animations restart
+    el.classList.add(cls);
+    clearTimeout(flashTimers[cls]);
+    flashTimers[cls] = setTimeout(function () { el.classList.remove(cls); }, hold || 900);
+  }
 
   // tiny synth: the whole soundtrack, zero bytes
   var AC = null, muted = false;
@@ -76,6 +96,141 @@
   UI.clink = clink; UI.rumble = rumble; UI.chime = chime;
   UI.setMuted = function (v) { muted = v; };
 
+  // ── 故事線 ───────────────────────────────────────────────────────────
+  // CONTENT.STORY is optional: a build without it simply never shows a story.
+  // Everything here reads through story() and returns quietly when it is absent,
+  // because the title screen, the done card and the museum all call into it
+  // unconditionally.
+  function story() {
+    var s = C && C.STORY;
+    if (!s || !s.title) return null;
+    return s;
+  }
+  // STAGES and STORY.beats are authored in the same order; match by id first so
+  // a reordered or extra beat can never land on the wrong year.
+  function beatFor(stage, idx) {
+    var s = story();
+    if (!s || !s.beats || !s.beats.length) return null;
+    var id = stage && stage.id;
+    for (var i = 0; i < s.beats.length; i++) {
+      if (id && s.beats[i] && s.beats[i].stage === id) return s.beats[i];
+    }
+    var b = s.beats[idx];
+    return (b && b.line) ? b : null;
+  }
+  function storyStageReached(id) {
+    var stages = (C && C.STAGES) || [];
+    for (var i = 0; i < stages.length; i++) {
+      if (stages[i].id === id) return i <= state.stageIdx;
+    }
+    return true;                                  // unknown stage: do not lie
+  }
+  function markSeen(stage) {
+    var s = story();
+    if (!s || !stage || !stage.id) return false;
+    if (state.storySeen[stage.id]) return false;
+    state.storySeen[stage.id] = true;
+    return true;
+  }
+
+  // Title screen: the title and the one sentence that sets the machine up.
+  function paintStartStory() {
+    var s = story();
+    var wrap = $('sStory');
+    if (!wrap) return;
+    if (!s) { hide(wrap); return; }
+    txt($('sStoryTitle'), s.title);
+    txt($('sStoryPremise'), s.premise || '');
+    show(wrap);
+  }
+
+  // Museum 故事線 tab: every beat, in order, with its year. A beat the player
+  // has not reached is muted exactly like an uncollected prop.
+  function paintStoryTab() {
+    var s = story();
+    var wrap = $('museumStory');
+    if (!wrap) return;
+    if (!s) { hide(wrap); hide($('museumTabs')); return; }
+    show($('museumTabs'));
+    var premise = $('stPremise');
+    txt(premise, s.premise || '');
+    if (premise) premise.hidden = !s.premise;
+
+    var list = $('stList');
+    if (list) {
+      list.innerHTML = '';
+      var beats = s.beats || [];
+      beats.forEach(function (b, i) {
+        if (!b) return;
+        var reached = storyStageReached(b.stage);
+        var year = yearOfStage(b.stage, i);
+        var li = document.createElement('li');
+        li.className = 'stBeat' + (reached ? '' : ' locked');
+        li.dataset.stage = b.stage || '';
+        if (!reached) li.setAttribute('aria-hidden', 'true');   // nothing to read yet
+        var y = document.createElement('span');
+        y.className = 'stY';
+        y.textContent = reached && year != null ? year : '？？？';
+        var l = document.createElement('span');
+        l.className = 'stL';
+        l.textContent = reached ? String(b.line || '') : '未行到呢一年';
+        li.appendChild(y);
+        li.appendChild(l);
+        list.appendChild(li);
+      });
+    }
+
+    var end = $('stEnd');
+    if (end) {
+      var e = s.ending;
+      // The ending is the payoff of the whole line: only once it is reached.
+      var last = (C.STAGES && C.STAGES[C.STAGES.length - 1]) || null;
+      var reachedEnd = !last || storyStageReached(last.id);
+      if (e && e.line) {
+        txt($('stEndLine'), reachedEnd ? e.line : '？？？');
+        txt($('stEndText'), reachedEnd ? (e.text || '') : '');
+        end.classList.toggle('locked', !reachedEnd);
+        if (!reachedEnd) end.setAttribute('aria-hidden', 'true');
+        else end.removeAttribute('aria-hidden');
+        show(end);
+      } else hide(end);
+    }
+  }
+  function yearOfStage(id, idx) {
+    var stages = (C && C.STAGES) || [];
+    for (var i = 0; i < stages.length; i++) if (stages[i].id === id) return stages[i].year;
+    return (stages[idx] && stages[idx].year) || null;
+  }
+
+  function setStoryTab(on) {
+    var grid = $('museumGrid'), detail = $('museumDetail'), box = $('museumStory');
+    // No story in this build: the tab does not exist and cannot be switched to.
+    if (on && !story()) on = false;
+    state.storyTab = !!on;
+    var tabs = $('museumTabs');
+    if (tabs) { if (story()) show(tabs); else hide(tabs); }
+    var tabG = $('mtabGrid'), tabS = $('mtabStory');
+    if (tabG && tabS) {
+      tabG.classList.toggle('on', !state.storyTab);
+      tabS.classList.toggle('on', state.storyTab);
+      tabG.setAttribute('aria-pressed', String(!state.storyTab));
+      tabS.setAttribute('aria-pressed', String(state.storyTab));
+    }
+    if (state.storyTab) {
+      paintStoryTab();
+      if (grid) grid.hidden = true;
+      if (detail) detail.hidden = true;
+      if (box) box.hidden = false;
+      txt(els.museumTitle, '故事線');
+    } else {
+      if (box) box.hidden = true;
+      if (grid) grid.hidden = false;
+      txt(els.museumTitle, '香港嘢博物館');
+    }
+    if (els.museumScroll) els.museumScroll.scrollTop = 0;
+  }
+  UI.setStoryTab = setStoryTab;
+
   // ── boot ───────────────────────────────────────────────────────────────
   UI.init = function () {
     els.coins = $('coins');
@@ -86,15 +241,35 @@
     els.card = $('card');
     els.museum = $('museum');
     els.museumGrid = $('museumGrid');
+    els.museumDetail = $('museumDetail');
+    els.museumScroll = $('museumScroll');
+    els.museumTitle = $('museumTitle');
+    els.md = {
+      img: $('mdImg'), name: $('mdName'), en: $('mdEn'), jyut: $('mdJyut'),
+      tags: $('mdTags'), mem: $('mdMem'), use: $('mdUse'), fact: $('mdFact'),
+      owner: $('mdOwner'), memWrap: $('mdMemWrap'), useWrap: $('mdUseWrap'),
+      factWrap: $('mdFactWrap'), ownerWrap: $('mdOwnerWrap'),
+      back: $('mdBack'), note: $('mdNote')
+    };
     els.done = $('done');
     els.start = $('start');
+    els.live = $('live');
 
     $('museumBtn').onclick = function () { UI.openMuseum(); };
-    $('museumClose').onclick = function () { els.museum.classList.remove('on'); };
+    // 返去 walks back one level, exactly like Escape.
+    $('museumClose').onclick = function () {
+      if (state.mdOpen) UI.closeMuseumDetail();
+      else if (state.storyTab) setStoryTab(false);
+      else UI.closeMuseum();
+    };
+    if ($('mtabGrid')) $('mtabGrid').onclick = function () { setStoryTab(false); };
+    if ($('mtabStory')) $('mtabStory').onclick = function () { setStoryTab(true); };
+    $('mdBack').onclick = function () { UI.closeMuseumDetail(); };
     $('cardClose').onclick = function () { UI.closeCard(); };
     $('soundBtn').onclick = function () {
       muted = !muted;
       this.textContent = muted ? '♪ 關' : '♪ 開';
+      this.setAttribute('aria-label', muted ? '開聲' : '靜音');
     };
     $('slapBtn').onclick = function () { if (UI.onSlap) UI.onSlap(); };
     $('sGo').onclick = function () {
@@ -102,12 +277,91 @@
       els.start.classList.add('off');
       if (UI.onStart) UI.onStart();
     };
-    $('doneStay').onclick = function () { els.done.classList.remove('on'); };
+    $('doneStay').onclick = function () {
+      els.done.classList.remove('on');
+      // main.js freezes the world while the card is up. 再推多陣 must hand the
+      // game back, or the player is left with a table they cannot drop onto.
+      if (UI.onStayStage) UI.onStayStage();
+      else if (G.Sim) G.Sim.busy = false;
+    };
     $('doneNext').onclick = function () {
       els.done.classList.remove('on');
       if (UI.onNextStage) UI.onNextStage();
     };
-    els.museum.onclick = function (e) { if (e.target === els.museum) els.museum.classList.remove('on'); };
+    els.museum.onclick = function (e) {
+      if (e.target !== els.museum) return;
+      if (state.mdOpen) UI.closeMuseumDetail();
+      else UI.closeMuseum();
+    };
+
+    els.slapBtn = $('slapBtn');
+    els.slapN = $('slapN');
+    els.slapFill = $('slapFill');
+    // Until main.js reports in, show the full budget the markup advertises.
+    UI.slapState({ left: 3, max: 3, ratio: 0 });
+
+    paintStartStory();
+
+    // Escape walks back one level at a time; it never closes the page.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (els.card.classList.contains('on')) { UI.closeCard(); return; }
+      if (!els.museum.classList.contains('on')) return;
+      e.preventDefault();
+      if (state.mdOpen) UI.closeMuseumDetail();
+      else if (state.storyTab) setStoryTab(false);
+      else UI.closeMuseum();
+    });
+    document.addEventListener('keydown', trapTab);
+  };
+
+  // ── 拍機 charge meter ─────────────────────────────────────────────────
+  // main.js owns the budget; ui.js only draws it. left = charges in hand,
+  // max = ceiling, ratio = 0..1 refill toward the next charge.
+  var slap = { left: 3, max: 3, ratio: 0, known: false };
+  var slapped = { left: -1, max: -1, pct: -1 };   // last values actually painted
+  function paintSlap() {
+    var max = Math.max(1, slap.max);
+    var left = clamp(Math.round(slap.left), 0, max);
+    var ratio = clamp(slap.ratio, 0, 1);
+    var pct = Math.round(ratio * 100);
+    // main.js may poll this every frame; only touch the DOM when it changed.
+    if (left === slapped.left && max === slapped.max && (left > 0 || pct === slapped.pct)) return;
+    slapped = { left: left, max: max, pct: left > 0 ? -1 : pct };
+    if (els.slapN) els.slapN.textContent = left + '/' + max;
+    var ready = left > 0;
+    // Ready: the bar is the budget you have left. Empty: it is the refill.
+    var fill = ready ? left / max : ratio;
+    if (els.slapFill) {
+      els.slapFill.style.transform = 'scaleX(' + fill.toFixed(3) + ')';
+    }
+    if (els.slapBtn) {
+      els.slapBtn.classList.toggle('spent', !ready);
+      if (ready) els.slapBtn.removeAttribute('aria-disabled');
+      else els.slapBtn.setAttribute('aria-disabled', 'true');
+      els.slapBtn.setAttribute('aria-label', ready
+        ? ('拍機，仲有 ' + left + ' 次，滿 ' + max + ' 次')
+        : ('拍機，冇力，差 ' + pct + '% 回氣'));
+      var drip = els.slapBtn.querySelector('.slapN');
+      if (drip) drip.setAttribute('title', left + ' / ' + max);
+    }
+  }
+  UI.slapState = function (s) {
+    if (!s) return;
+    var max = num(s.max, slap.max) <= 0 ? 1 : num(s.max, slap.max);
+    var left = clamp(num(s.left, slap.left), 0, max);
+    var ratio = clamp(num(s.ratio, 0), 0, 1);
+    var before = slap;
+    slap = { left: left, max: max, ratio: ratio, known: true };
+    paintSlap();
+    // A charge coming back is the one moment the player must notice.
+    if (before.known && left > before.left && before.left < max) {
+      flash(els.slapBtn, 'recharged', 900);
+      if (els.live) els.live.textContent = '拍機回咗一次力';
+    }
+  };
+  UI.slapFired = function () {
+    flash(els.slapBtn, 'firing', 320);
   };
 
   // ── stage chrome ───────────────────────────────────────────────────────
@@ -233,8 +487,15 @@
   UI.isCardOpen = function () { return state.cardOpen; };
 
   // ── museum ─────────────────────────────────────────────────────────────
-  UI.openMuseum = function () {
+  // Grid of every prop in every stage; a collected one is a button that opens
+  // a readable detail panel, an uncollected one is inert and anonymous.
+  function museumGrid() {
     els.museumGrid.innerHTML = '';
+    els.museumGrid.hidden = false;
+    els.museumDetail.hidden = true;
+    state.mdOpen = false;
+    state.mdId = null;
+    txt(els.museumTitle, '香港嘢博物館');
     var stages = C.STAGES;
     stages.forEach(function (st) {
       var ids = st.big.concat(st.small);
@@ -246,23 +507,237 @@
       ids.forEach(function (id) {
         var def = C.PROPS[id], got = !!state.collected[id];
         var d = document.createElement('div');
-        d.className = 'mu' + (got ? ' got' : '');
-        var img = '<div style="width:100%;aspect-ratio:1"></div>';
-        if (got) { try { img = '<img alt="" src="' + G.R.thumb(id) + '">'; } catch (e) {} }
-        d.innerHTML = img + '<div class="n">' + (got ? def.name : '？？？') +
-          '</div><div class="b">' + (got && def.big ? '大件' : '') + '</div>';
+        if (!def) return;
+        d.dataset.id = id;
+        if (got) {
+          d = document.createElement('button');
+          d.type = 'button';
+          d.className = 'mu got';
+          d.dataset.id = id;
+          d.setAttribute('aria-label', def.name + '，睇詳細');
+          d.addEventListener('click', function () { UI.openMuseumDetail(id); });
+        } else {
+          d.className = 'mu locked';
+          d.setAttribute('aria-hidden', 'true');       // decorative: nothing to read
+        }
+        var inner = got
+          ? '<img alt="" src="' + thumb(id) + '">'
+          : '<div class="lockMark">?</div>';
+        d.innerHTML = inner + '<div class="n">' + (got ? esc(def.name) : '未搵到') + '</div>' +
+          '<div class="b">' + (got ? (def.big ? '大件' : '細件') : '') + '</div>';
         els.museumGrid.appendChild(d);
       });
     });
+  }
+
+  function thumb(id) {
+    try { var u = G.R.thumb(id); return u ? String(u).replace(/"/g, '&quot;') : ''; }
+    catch (e) { return ''; }
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  // mem is authored HTML with <b> highlights; anything else could be plain.
+  function memHtml(s) {
+    if (s == null) return '';
+    var str = String(s);
+    return /<\/?[a-z][\s\S]*>/i.test(str) ? str : esc(str);
+  }
+
+  UI.openMuseum = function () {
+    museumGrid();
+    setStoryTab(false);
     els.museum.classList.add('on');
+    setPageInert(true);
+    if (els.museumScroll) els.museumScroll.scrollTop = 0;
+    // Move focus in, but not into the grid: the close control is the exit.
+    focusLater($('museumClose'));
   };
+
+  UI.openMuseumDetail = function (propId) {
+    var def = C.PROPS[propId];
+    if (!def || !state.collected[propId]) return;   // locked stays locked
+    var m = els.md;
+    if (!m || !m.name) return;
+    state.mdOpen = true;
+    state.mdId = propId;
+
+    txt(m.name, def.name);
+    setLine(m.en, def.en ? def.en : null);
+    setLine(m.jyut, def.jyut || null);
+
+    if (m.img) {
+      var src = thumb(propId);
+      if (src) { m.img.src = src; m.img.alt = def.name + ' 立體圖'; }
+      else { m.img.removeAttribute('src'); m.img.alt = ''; }
+    }
+
+    // Tags: year of the stage it belongs to (if the prop does not carry one)
+    // and 大件/細件. The content contract adds def.year; use it when present.
+    var year = num(def.year, stageYearOf(propId));
+    if (m.tags) {
+      m.tags.innerHTML = '';
+      if (year != null) m.tags.appendChild(tag(year + ' 年', false));
+      m.tags.appendChild(tag(def.big ? '大件' : '細件', true));
+    }
+
+    // owner: name + the recurring character's note, or anonymous.
+    var owner = def.owner ? C.PEOPLE[def.owner] : null;
+    if (m.owner) {
+      if (owner) {
+        m.owner.innerHTML = '<b>' + esc(owner.name) + '</b>' + (owner.note ? ' · ' + esc(owner.note) : '');
+        show(m.ownerWrap);
+      } else {
+        m.owner.innerHTML = '冇人認領。跌喺機底嘅嘢，通常都係咁。';
+        show(m.ownerWrap);
+      }
+    }
+
+    setBlock(m.memWrap, function () { m.mem.innerHTML = memHtml(def.mem); }, def.mem);
+    setBlock(m.useWrap, function () { txt(m.use, def.use); }, def.use);
+    setBlock(m.factWrap, function () { txt(m.fact, def.fact); }, def.fact);
+
+    if (m.note) {
+      txt(m.note, year != null && def.year == null
+        ? '呢件嘢，' + year + ' 年喺香港係日常。'
+        : '');
+    }
+
+    els.museumGrid.hidden = true;
+    els.museumDetail.hidden = false;
+    txt(els.museumTitle, '藏品');
+    if (els.museumScroll) els.museumScroll.scrollTop = 0;
+    focusLater(m.back || $('museumClose'));
+  };
+
+  function stageYearOf(propId) {
+    var stages = C.STAGES || [];
+    for (var i = 0; i < stages.length; i++) {
+      var st = stages[i];
+      if (st.big.indexOf(propId) >= 0 || st.small.indexOf(propId) >= 0) return st.year;
+    }
+    return null;
+  }
+  function tag(text, plain) {
+    var s = document.createElement('span');
+    s.className = 'mdTag' + (plain ? '' : ' plain');
+    s.textContent = text;
+    return s;
+  }
+  function show(el) { if (el) el.hidden = false; }
+  function hide(el) { if (el) el.hidden = true; }
+  function setLine(el, text) {
+    if (!el) return;
+    if (text == null || text === '') { el.textContent = ''; hide(el); return; }
+    el.textContent = String(text);
+    show(el);
+  }
+  function setBlock(wrap, paint, value) {
+    if (!wrap) return;
+    if (value == null || value === '') { hide(wrap); return; }
+    paint();
+    show(wrap);
+  }
+
+  UI.closeMuseumDetail = function () {
+    if (!state.mdOpen) return;
+    state.mdOpen = false;
+    var backId = state.mdId;
+    state.mdId = null;
+    els.museumDetail.hidden = true;
+    els.museumGrid.hidden = false;
+    txt(els.museumTitle, '香港嘢博物館');
+    if (els.museumScroll) els.museumScroll.scrollTop = 0;
+    // Focus returns to the tile that opened the panel, so a keyboard or
+    // screen-reader user lands where they left off (fallback: close button).
+    var tile = backId && els.museumGrid.querySelector('[data-id="' + cssEsc(backId) + '"]');
+    focusLater(tile || $('museumClose'));
+  };
+
+  UI.closeMuseum = function () {
+    state.mdOpen = false;
+    state.mdId = null;
+    els.museum.classList.remove('on');
+    setPageInert(false);
+    if ($('museumBtn')) focusLater($('museumBtn'));
+  };
+  UI.isMuseumOpen = function () { return els.museum.classList.contains('on'); };
+
+  // While the museum is up it is the only thing on screen, so the HUD, the
+  // collect card and the other overlays must not be reachable by Tab or AT.
+  // `inert` does that natively; the Tab wrap below covers older browsers.
+  var INERT_ROOTS = ['hud', 'card', 'start', 'done'];
+  function setPageInert(on) {
+    INERT_ROOTS.forEach(function (id) {
+      var el = $(id);
+      if (!el) return;
+      if (on) {
+        try { el.setAttribute('inert', ''); } catch (e) {}
+        el.setAttribute('aria-hidden', 'true');
+      } else {
+        try { el.removeAttribute('inert'); } catch (e) {}
+        el.removeAttribute('aria-hidden');
+      }
+    });
+  }
+  function focusables(root) {
+    var list = root.querySelectorAll('button,[href],input,select,textarea,[tabindex]');
+    return [].filter.call(list, function (el) {
+      return el.tabIndex >= 0 && !el.disabled && !el.closest('[hidden]') && el.getClientRects().length > 0;
+    });
+  }
+  function trapTab(e) {
+    if (e.key !== 'Tab' || !els.museum.classList.contains('on')) return;
+    var list = focusables(els.museum);
+    if (!list.length) return;
+    var i = list.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); list[list.length - 1].focus(); }
+    else if (!e.shiftKey && (i === list.length - 1 || i === -1)) { e.preventDefault(); list[0].focus(); }
+  }
+
+  function cssEsc(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+  // Focus after the overlay transition has actually started, not mid-click.
+  function focusLater(el) {
+    if (!el || !el.focus) return;
+    setTimeout(function () { try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} } }, 60);
+  }
 
   // ── stage complete ─────────────────────────────────────────────────────
   UI.showStageDone = function (stage, isLast) {
-    $('doneYear').textContent = stage.year;
-    $('doneMsg').textContent = stage.done;
+    var yearEl = $('doneYear'), msgEl = $('doneMsg');
+    var lineEl = $('doneLine'), beatEl = $('doneBeat');
+    var s = story();
+    var ending = (isLast && s && s.ending) ? s.ending : null;
+
+    if (ending && (ending.line || ending.text)) {
+      // The last card IS the ending: the tagline takes the year's place and the
+      // closing text takes the generic 搞掂 line. Nothing extra to dismiss, so
+      // the ending lands as the thing the player reads, not as a second modal.
+      if (yearEl) yearEl.hidden = true;
+      txt(lineEl, ending.line || '');
+      if (lineEl) lineEl.hidden = !ending.line;
+      txt(msgEl, ending.text || (stage && stage.done) || '');
+      hide(beatEl);
+      state.storySeen.ending = true;
+    } else {
+      if (yearEl) { yearEl.hidden = false; txt(yearEl, stage.year); }
+      txt(msgEl, stage.done);
+      hide(lineEl);
+      // One beat, once per save: a stage that has already been read keeps its
+      // plain done line, so the story never repeats itself on a replay.
+      var beat = stage && beatFor(stage, state.stageIdx);
+      if (beat && !state.storySeen[stage.id]) {
+        txt(beatEl, beat.line || '');
+        show(beatEl);
+        markSeen(stage);
+      } else hide(beatEl);
+    }
+
     $('doneNext').textContent = isLast ? '睇下機底' : '翻新部機';
     els.done.classList.add('on');
+    UI.save();   // persist what was just read
   };
 
   // ── collect checklist ──────────────────────────────────────────────────
@@ -273,7 +748,8 @@
   UI.save = function () {
     try {
       localStorage.setItem('yatmangai.save.v1', JSON.stringify({
-        v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected
+        v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected,
+        seen: state.storySeen
       }));
     } catch (e) {}
   };
@@ -287,6 +763,7 @@
       state.collected = s.collected || {};
       state.stageIdx = s.stageIdx || 0;
       state.coins = s.coins || 0;
+      state.storySeen = (s.seen && typeof s.seen === 'object') ? s.seen : {};
       return true;
     } catch (e) { return false; }
   };
