@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-Hant-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0a08">
+<title>一蚊雞 · Coin Pusher HK</title>
+<style>
+/* One palette, four steps of tone, one typeface, two radii. Everything below
+   reads from these: a new surface is a step in tone, not a hairline. */
+:root{
+  --bg:#0b0a08; --ink:#f2e6d0; --dim:#9c8f7c; --line:rgba(242,230,208,.14);
+  --red:#c8342b; --green:#4e8f5d; --gold:#d9a441; --wood:#6b4a2f; --neon:#ff6b5e;
+
+  /* tone ladder: what you act on > what you aim for > why > fine print */
+  --ink-2:#ddd0ba; --ink-3:#c4b7a3; --faint:#6f6557;
+  /* surfaces, one step apart. No panel is separated by a line alone. */
+  --panel:#14110d; --panel-2:#0f0c09; --rise:rgba(242,230,208,.06);
+  /* radii: pill for state, sm for a control, md for a surface */
+  --r-sm:9px; --r-md:13px; --r-lg:16px;
+  /* stage tint. ui.js rewrites all four from the stage palette, so chrome
+     follows the era instead of being gold on a teal machine. */
+  --gold-hi:#ffd28a;
+  --gold-a14:rgba(217,164,65,.14); --gold-a38:rgba(217,164,65,.38);
+  --gold-a60:rgba(217,164,65,.60);
+  --lift:0 10px 34px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+/* ui.js toggles [hidden]; author display: rules would otherwise beat the UA one */
+[hidden]{display:none !important}
+html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
+  font-family:"Noto Sans HK","PingFang HK","Microsoft JhengHei","Hiragino Sans GB",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;user-select:none;-webkit-user-select:none;
+  touch-action:none;overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
+#c{position:fixed;left:0;top:0;width:100%;height:100%;display:block;
+  height:100dvh;touch-action:none}
+
+/* HUD ────────────────────────────────────────────────────────────────────
+   One reading order, three sizes, three tones. The wallet is the only number
+   the player acts on, so it is the largest and the only one that is gold. The
+   era is context: same weight, one step of tone quieter. The shop sign is a
+   signature, not information, so it is smallest and dimmest of the three. */
+#hud{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between}
+#top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:max(12px,env(safe-area-inset-top)) 16px 0}
+#brand{font-size:15px;letter-spacing:.16em;font-weight:700;line-height:1;color:var(--ink-2);
+  text-shadow:0 2px 12px #000}
+#brand small{display:block;font-size:8px;letter-spacing:.28em;color:var(--faint);font-weight:400;margin-top:5px}
+#stageBox{text-align:right;padding-top:1px}
+#stageName{font-size:10px;letter-spacing:.18em;color:var(--dim);line-height:1.5}
+#year{font-size:22px;font-weight:600;line-height:1.15;letter-spacing:.02em;color:var(--ink-2);
+  font-variant-numeric:tabular-nums}
+/* the counter sits on its own plate: over a mid-brown cabinet, floating text
+   lost half its contrast, and the number is the one thing that must not */
+#coinBox{position:absolute;left:50%;top:max(9px,env(safe-area-inset-top));transform:translateX(-50%);
+  display:flex;align-items:baseline;gap:5px;padding:6px 14px 7px;border-radius:999px;
+  background:rgba(8,7,5,.66);white-space:nowrap}
+#coins{font-size:31px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;
+  color:var(--gold-hi);text-shadow:0 0 22px rgba(217,164,65,.42)}
+#coinBox.tick #coins{animation:coinTick .34s cubic-bezier(.34,1.56,.64,1)}
+@keyframes coinTick{
+  0%{transform:scale(1)}
+  32%{transform:scale(1.13)}
+  100%{transform:scale(1)}
+}
+#coinsLbl{font-size:11px;letter-spacing:.06em;color:var(--gold);opacity:.8}
+/* 連出: the machine paying twice in a row is the best thing that can happen
+   between prizes, and it used to be invisible. It rides on the wallet plate so
+   the eye never has to leave the number. */
+#combo{font-size:11px;letter-spacing:.04em;color:var(--gold-hi);font-variant-numeric:tabular-nums;
+  padding-left:7px;border-left:1px solid var(--gold-a38);line-height:1.5;
+  animation:comboIn .34s cubic-bezier(.34,1.56,.64,1)}
+@keyframes comboIn{
+  0%{opacity:0;transform:translateY(4px) scale(.84)}
+  100%{opacity:1;transform:none}
+}
+/* 上層 N 枚: the deck that never pays, counted anyway, because a player who
+   cannot see the top pile has no reason to look at the top deck at all. */
+#topPile{margin-top:5px;font-size:9.5px;letter-spacing:.1em;color:var(--faint);
+  font-variant-numeric:tabular-nums}
+#topPile b{font-weight:600;color:var(--dim)}
+
+#bottom{padding:0 16px max(14px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px}
+#bigWrap{display:flex;align-items:center;gap:10px;pointer-events:auto;min-width:0}
+#bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto;min-width:0}
+#bigCount{font-size:11px;letter-spacing:.06em;color:var(--gold);flex:0 0 auto;
+  font-variant-numeric:tabular-nums;padding:4px 9px;border:1px solid var(--gold-a38);
+  border-radius:999px;background:rgba(11,10,8,.72)}
+/* a chip is a flat plate with a dot; it is not a glass pill. Backdrop blur on
+   twelve small pills cost more than the whole scene and read as frosted plastic
+   sitting on a 1972 arcade machine. */
+.chip{display:flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);
+  border-radius:999px;background:var(--rise);font-size:12px;
+  color:var(--dim);transition:border-color .25s,background .25s,color .25s}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:#3a342c;transition:background .25s,box-shadow .25s}
+.chip.got{border-color:var(--gold-a60);color:var(--ink-2);background:var(--gold-a14)}
+.chip.big{border-style:dashed}
+.chip.big.got{border-style:solid;box-shadow:0 0 16px rgba(232,182,74,.30)}
+.chip.got .dot{background:var(--gold);box-shadow:0 0 12px var(--gold)}
+/* the moment of collecting: one short pulse, then it settles */
+@keyframes chipPop{
+  0%{transform:scale(1)}
+  35%{transform:scale(1.14)}
+  100%{transform:scale(1)}
+}
+@keyframes chipGlow{
+  0%{box-shadow:0 0 0 rgba(232,182,74,0)}
+  40%{box-shadow:0 0 26px rgba(232,182,74,.75)}
+  100%{box-shadow:0 0 16px rgba(232,182,74,.30)}
+}
+.chip.justgot{animation:chipPop .42s cubic-bezier(.34,1.56,.64,1), chipGlow .9s ease-out}
+@media (prefers-reduced-motion:reduce){
+  .chip.justgot{animation:none;border-color:var(--gold-hi)}
+}
+
+/* the machine line: a surface, a step of tone up from the room, with the
+   speaker edge doing the job a blur used to do badly */
+#machine{font-size:13px;line-height:1.55;color:var(--ink-2);max-width:min(560px,86vw);
+  background:var(--panel);border-left:2px solid var(--gold);padding:9px 13px;
+  border-radius:0 var(--r-sm) var(--r-sm) 0;opacity:0;transform:translateY(6px);
+  transition:opacity .3s,transform .3s;min-height:0}
+#machine.on{opacity:1;transform:none}
+#hint{font-size:11px;letter-spacing:.16em;color:var(--faint);text-align:center;transition:opacity .4s}
+
+/* buttons: one fill, one radius, one height. The row is a control strip, so
+   every button in it is the same width -- a 10 px difference reads as a bug,
+   not as a hierarchy. */
+.btnRow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;pointer-events:auto}
+.btnRow .btn{width:100%;min-width:0}
+.btn{pointer-events:auto;font:inherit;font-size:12px;letter-spacing:.1em;color:var(--ink);
+  background:var(--rise);border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:9px 14px;min-height:42px;cursor:pointer;
+  transition:background .18s,border-color .18s,transform .18s;
+  display:inline-flex;align-items:center;justify-content:center}
+.btn:hover{background:rgba(242,230,208,.14)}
+.btn:active{transform:scale(.97)}
+.btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.btn.primary{background:var(--gold);color:#160f04;border-color:var(--gold);font-weight:700}
+.btn.primary:focus-visible{outline-color:var(--gold-hi)}
+
+/* 拍機 carries its own state: charges left, and a refill bar along the
+   bottom edge. One glance says whether a slap will land. */
+.btn.slap{position:relative;flex-direction:column;gap:1px;overflow:hidden;min-height:46px;
+  padding:6px 12px 9px;line-height:1;isolation:isolate}
+.slapRow{display:flex;align-items:center;justify-content:center;gap:6px;width:100%}
+.slapLbl{font-size:12px;letter-spacing:.12em}
+.slapN{font-size:9px;letter-spacing:.04em;color:var(--gold);font-variant-numeric:tabular-nums;
+  padding:1px 5px;border:1px solid rgba(217,164,65,.38);border-radius:999px;
+  background:rgba(217,164,65,.12);line-height:1.45;
+  transition:color .2s,border-color .2s,background .2s}
+.slapMeter{position:absolute;left:7px;right:7px;bottom:3px;height:3px;border-radius:999px;
+  background:rgba(242,230,208,.10);overflow:hidden;pointer-events:none}
+.slapFill{display:block;height:100%;width:100%;border-radius:inherit;background:var(--gold);
+  transform:scaleX(1);transform-origin:left center;transition:transform .2s linear,background .3s}
+.btn.slap.spent{color:#7d7264;background:rgba(242,230,208,.03);border-color:rgba(242,230,208,.07)}
+.btn.slap.spent .slapN{color:var(--dim);border-color:rgba(242,230,208,.14);background:transparent}
+.btn.slap.spent .slapFill{background:linear-gradient(90deg,rgba(217,164,65,.42),var(--gold))}
+.btn.slap.firing{animation:slapTap .24s ease-out}
+.btn.slap.recharged{animation:slapPop .78s cubic-bezier(.34,1.56,.64,1)}
+@keyframes slapTap{0%{transform:scale(1)}45%{transform:scale(.96)}100%{transform:scale(1)}}
+@keyframes slapPop{
+  0%{transform:scale(1);box-shadow:0 0 0 rgba(217,164,65,0)}
+  30%{transform:scale(1.05);box-shadow:0 0 22px rgba(217,164,65,.55)}
+  100%{transform:scale(1);box-shadow:0 0 0 rgba(217,164,65,0)}
+}
+
+/* collect card: the one thing in the game that genuinely floats above the
+   machine, so it is the one thing allowed to carry a shadow */
+#card{position:fixed;left:50%;bottom:0;transform:translate(-50%,110%);width:min(420px,92vw);
+  background:var(--panel);border:1px solid var(--gold-a38);border-bottom:0;
+  border-radius:var(--r-lg) var(--r-lg) 0 0;padding:16px 18px max(20px,env(safe-area-inset-bottom));
+  transition:transform .42s cubic-bezier(.2,.9,.25,1);pointer-events:auto;z-index:20;
+  box-shadow:0 -18px 60px rgba(0,0,0,.7)}
+#card.on{transform:translate(-50%,0)}
+/* the ribbon: a prize needs a name for what just happened, in one glance */
+#cardTag{position:absolute;top:-11px;left:18px;font-size:9.5px;letter-spacing:.18em;
+  color:var(--bg);background:var(--gold);border-radius:999px;padding:3px 10px 4px;
+  font-weight:700;pointer-events:none}
+#cardTag.pop{animation:tagPop .48s cubic-bezier(.34,1.56,.64,1)}
+@keyframes tagPop{
+  0%{opacity:0;transform:translateY(6px) scale(.8)}
+  100%{opacity:1;transform:none}
+}
+#cardTop{display:flex;gap:14px;align-items:center}
+#cardImg{width:78px;height:78px;flex:0 0 78px;border-radius:var(--r-sm);background:var(--bg);
+  border:1px solid var(--line);object-fit:contain}
+#cardName{font-size:22px;font-weight:700;line-height:1.15}
+#cardJyut{font-size:11px;letter-spacing:.16em;color:var(--gold);margin-top:4px}
+#cardOwner{font-size:11px;color:var(--dim);margin-top:5px}
+#cardMem{margin-top:14px;font-size:13px;line-height:1.72;color:var(--ink-2);
+  border-left:2px solid var(--gold-a60);padding-left:11px}
+#cardMem b{color:var(--ink);font-weight:600}
+#cardClose{margin-top:14px}
+
+/* overlays: a whole room, not a frosted sheet. The blur used to cost a
+   full-screen backdrop-filter for a difference nobody can see over #0b0a08. */
+.ov{position:fixed;inset:0;background:rgba(6,5,4,.965);
+  display:none;flex-direction:column;z-index:30;padding:max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom))}
+.ov.on{display:flex}
+.ovHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex:0 0 auto;gap:10px}
+.ovTitle{font-size:12px;letter-spacing:.22em;color:var(--dim)}
+.ovBody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+  touch-action:pan-y;min-height:0}
+
+#museumGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;
+  padding-bottom:8px}
+.mu{font:inherit;color:inherit;display:block;width:100%;border:1px solid var(--line);
+  border-radius:10px;padding:9px;background:rgba(242,230,208,.03);text-align:center;
+  opacity:.24;filter:grayscale(1);transition:.3s;cursor:default;-webkit-appearance:none;appearance:none}
+.mu.got{opacity:1;filter:none;border-color:rgba(217,164,65,.4);background:rgba(217,164,65,.06);
+  cursor:pointer}
+.mu.got:hover{background:rgba(217,164,65,.13);border-color:rgba(217,164,65,.7)}
+.mu.got:active{transform:scale(.97)}
+.mu:focus-visible{outline:2px solid var(--gold);outline-offset:2px;opacity:1;filter:none}
+.mu.locked{cursor:default}
+.mu img{width:100%;aspect-ratio:1;object-fit:contain;display:block}
+.mu .n{font-size:10px;margin-top:6px;line-height:1.3;color:var(--dim)}
+.mu.got .n{color:var(--ink)}
+.mu .b{font-size:9px;color:var(--gold);margin-top:2px;letter-spacing:.1em}
+.mu.locked .n{font-size:12px;letter-spacing:.14em;color:#5d554a}
+.mu.locked .lockMark{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  font-size:20px;color:#463f36;border:1px dashed rgba(242,230,208,.10);border-radius:6px}
+
+/* museum detail: a collected prop, read up close */
+#museumDetail{padding-bottom:24px;outline:none}
+.md{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:0}
+.mdTop{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.mdArt{flex:0 0 auto;width:168px;max-width:42vw;aspect-ratio:1;border-radius:12px;
+  border:1px solid rgba(217,164,65,.34);background:radial-gradient(circle at 50% 40%,#1b1710,#0b0a08 70%);
+  box-shadow:inset 0 0 40px rgba(217,164,65,.10),0 10px 34px rgba(0,0,0,.55)}
+.mdArt img{width:100%;height:100%;object-fit:contain;display:block}
+.mdHead{flex:1 1 140px;min-width:0}
+.mdName{font-size:26px;font-weight:700;line-height:1.18;letter-spacing:.02em}
+.mdEn{font-size:11px;letter-spacing:.08em;color:var(--dim);margin-top:5px;line-height:1.5}
+.mdJyut{font-size:11px;letter-spacing:.14em;color:var(--gold);margin-top:7px;line-height:1.5}
+.mdTags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.mdTag{font-size:9px;letter-spacing:.12em;padding:3px 8px;border-radius:999px;
+  border:1px solid rgba(217,164,65,.30);color:var(--gold);background:rgba(217,164,65,.10)}
+.mdTag.plain{border-color:var(--line);color:var(--dim);background:transparent}
+.mdRule{height:1px;background:linear-gradient(90deg,rgba(217,164,65,.45),rgba(217,164,65,0));
+  margin:18px 0 0;flex:0 0 auto}
+.mdBlock{margin-top:16px}
+.mdK{font-size:9px;letter-spacing:.26em;color:var(--gold);margin-bottom:6px}
+.mdMem{font-size:13px;line-height:1.78;color:#ddd0ba;border-left:2px solid rgba(217,164,65,.4);
+  padding-left:12px}
+.mdMem b{color:var(--ink);font-weight:600}
+.mdP{font-size:12.5px;line-height:1.75;color:#d3c6b0}
+.mdOwner{font-size:11px;color:var(--dim);line-height:1.6}
+.mdOwner b{color:#e6d8be;font-weight:600}
+.mdBack{margin-top:22px;align-self:flex-start;min-height:44px}
+.mdNote{font-size:10px;letter-spacing:.08em;color:#6f6557;margin-top:18px;line-height:1.6}
+
+/* museum tabs: 藏品 / 故事線. Only rendered when CONTENT.STORY exists, so a
+   build without the story is still the single-view museum it always was. */
+#museumTabs{display:flex;gap:4px;margin:-8px 0 12px;flex:0 0 auto}
+.mtab{font:inherit;font-size:11px;letter-spacing:.24em;color:var(--dim);background:none;
+  border:0;border-bottom:1px solid transparent;padding:9px 12px;min-height:40px;cursor:pointer;
+  transition:.2s;-webkit-appearance:none;appearance:none}
+.mtab:hover{color:var(--ink)}
+.mtab.on{color:var(--gold);border-bottom-color:var(--gold)}
+.mtab:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* the story line: one year, one thing that happened. Same voice as the
+   museum grid, and a locked beat stays a locked beat. */
+#museumStory{padding-bottom:24px}
+.stPremise{font-size:11.5px;line-height:1.9;color:var(--dim);letter-spacing:.06em;
+  margin:0 0 16px;max-width:46ch}
+.stList{list-style:none;max-width:520px}
+.stBeat{display:flex;gap:12px;align-items:baseline;padding:11px 0;
+  border-top:1px solid rgba(242,230,208,.08)}
+.stBeat:first-child{border-top:0}
+.stY{flex:0 0 46px;font-size:11px;letter-spacing:.14em;color:var(--gold);
+  font-variant-numeric:tabular-nums;line-height:1.7}
+.stL{flex:1 1 auto;font-size:12.5px;line-height:1.8;color:#d3c6b0;min-width:0}
+.stBeat.locked .stY{color:#5d554a}
+.stBeat.locked .stL{color:#5d554a;letter-spacing:.2em}
+.stEnd{margin-top:16px;padding:14px 0 0;border-top:1px solid rgba(217,164,65,.28)}
+.stEnd .stL{font-size:13px;line-height:1.7;color:var(--ink);font-weight:600}
+.stEnd .stT{margin-top:8px;font-size:11.5px;line-height:1.9;color:var(--dim);max-width:46ch}
+#stEnd.locked .stL{color:#5d554a;letter-spacing:.2em}
+
+#doneInner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:16px}
+#doneYear{font-size:64px;font-weight:700;letter-spacing:.02em;line-height:1}
+/* the ending replaces the year with the line it was always building to */
+#doneLine{font-size:clamp(19px,2.4vw,27px);font-weight:700;line-height:1.6;letter-spacing:.06em;
+  max-width:min(100%,22em);text-shadow:0 0 46px rgba(217,164,65,.32)}
+/* one beat of the story on the card of the stage it belongs to */
+#doneBeat{max-width:420px;font-size:12px;line-height:1.85;color:var(--ink-3);text-align:left;
+  border-left:2px solid var(--gold-a60);padding-left:12px}
+/* 年代結算: four numbers, read as a receipt. The round has an end, and this is
+   the only screen that says so. */
+#doneStats{display:flex;flex-wrap:wrap;justify-content:center;gap:0 22px;
+  padding:14px 16px;border-radius:var(--r-md);background:var(--panel-2);
+  border:1px solid var(--gold-a14);max-width:min(100%,440px)}
+.dsCol{min-width:63px;text-align:center}
+.dsK{font-size:9px;letter-spacing:.12em;color:var(--faint);line-height:1.6}
+.dsV{font-size:19px;font-weight:700;color:var(--ink-2);line-height:1.3;
+  font-variant-numeric:tabular-nums}
+.dsCol.up .dsV{color:var(--gold-hi)}
+.dsCol.down .dsV{color:var(--neon)}
+
+/* start */
+#start{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 35%,#1a1610,#070605 70%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;gap:0;
+  padding:24px;text-align:center;transition:opacity .5s}
+#start.off{opacity:0;pointer-events:none}
+#sTitle{font-size:clamp(48px,15vw,92px);font-weight:700;letter-spacing:.14em;line-height:1;
+  color:var(--ink);text-shadow:0 0 60px rgba(217,164,65,.35)}
+#sSub{margin-top:18px;font-size:11px;letter-spacing:.42em;color:var(--gold)}
+#sBody{margin-top:34px;font-size:12px;line-height:2;color:var(--dim);letter-spacing:.1em}
+/* the story line, sitting quietly above the button: a title to remember and
+   one sentence that explains the machine before the first coin drops */
+#sStory{margin-top:26px;max-width:44ch;padding:0 4px;text-align:center}
+#sStoryTitle{font-size:15px;letter-spacing:.2em;color:var(--gold);font-weight:600;line-height:1.6}
+#sStoryPremise{margin-top:9px;font-size:11px;line-height:1.85;color:var(--dim);letter-spacing:.06em}
+#sGo{margin-top:34px}
+
+#err{position:fixed;inset:0;background:#0b0a08;display:none;align-items:center;justify-content:center;
+  padding:30px;text-align:center;font-size:13px;line-height:1.9;color:var(--dim);z-index:99}
+#err.on{display:flex}
+#err b{color:var(--ink);display:block;margin-bottom:10px}
+
+/* settings: the museum's overlay family, one column of real controls.
+   Nothing on this page is decorative — every row is a state the player owns.
+   It reads from the same tone ladder as the HUD: label, value, fine print. */
+/* one centred column, the same width as the museum's reading measure. Left
+   aligned inside a 1280 px overlay the sheet looked like a form someone had
+   abandoned halfway across the page. */
+#settings .ovHead{width:100%;max-width:520px;margin:0 auto 16px}
+#settingsScroll{display:flex;flex-direction:column}
+#settingsScroll > *{width:100%;max-width:520px;margin-left:auto;margin-right:auto}
+.setGroup{max-width:520px;padding:16px 0;border-top:1px solid rgba(242,230,208,.08)}
+.setGroup:first-child{border-top:0;padding-top:0}
+.setK{font-size:9.5px;letter-spacing:.2em;color:var(--gold);margin-bottom:10px;opacity:.85}
+.setRow{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:44px}
+.setMain{min-width:0}
+.setName{font-size:14px;letter-spacing:.04em;color:var(--ink);line-height:1.5}
+.setSub{font-size:11px;line-height:1.7;color:var(--dim);margin-top:4px;max-width:34ch}
+.setWhat{font-size:12.5px;line-height:1.8;color:var(--ink-3);
+  border-left:2px solid rgba(200,52,43,.6);padding-left:11px;margin:2px 0 13px;max-width:46ch}
+.setHint{font-size:10.5px;letter-spacing:.03em;line-height:1.7;color:var(--faint);margin-top:10px;
+  max-width:46ch}
+.setNote{font-size:10px;line-height:1.8;letter-spacing:.04em;color:var(--faint);max-width:46ch;
+  margin-top:6px;padding-top:14px;border-top:1px solid rgba(242,230,208,.08)}
+/* the switch IS the flag: the knob moves, the word changes, aria-checked is the truth */
+.switch{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  min-height:44px;min-width:92px;padding:0 13px;font:inherit;font-size:11px;letter-spacing:.12em;
+  color:var(--dim);background:var(--rise);border:1px solid var(--line);border-radius:999px;
+  cursor:pointer;transition:color .2s,border-color .2s,background .2s;-webkit-appearance:none;appearance:none}
+.switch .knob{position:relative;width:28px;height:16px;border-radius:999px;
+  background:rgba(242,230,208,.16);transition:background .2s}
+.switch .knob i{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+  background:var(--dim);transition:left .2s,background .2s}
+.switch[aria-checked="true"]{color:var(--ink);border-color:var(--gold-a38);background:var(--gold-a14)}
+.switch[aria-checked="true"] .knob{background:var(--gold-a60)}
+.switch[aria-checked="true"] .knob i{left:14px;background:var(--gold)}
+.switch:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+/* danger: the one control on this page that destroys something */
+.btn.danger{color:#f3d9d5;border-color:rgba(200,52,43,.50);background:rgba(200,52,43,.14)}
+.btn.danger:hover{background:rgba(200,52,43,.28);border-color:rgba(200,52,43,.8)}
+.btn.danger:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+#settingsReset{width:100%;min-height:48px}
+/* armed: the button has already asked once, and now says so */
+.btn.danger.armed{background:var(--red);border-color:var(--red);color:#fff;font-weight:700;
+  animation:armPulse .5s ease-out}
+@keyframes armPulse{0%{transform:scale(1)}40%{transform:scale(1.02)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){
+  .btn.danger.armed{animation:none}
+}
+
+/* ── phone ────────────────────────────────────────────────────────────────
+   Two things break on a phone that never break on a desktop: the HUD is
+   wider than the screen, and a finger is 9 mm wide, so anything smaller than
+   about 44 px is a coin flip. Everything below is either fitting or target
+   size; nothing here changes the game. */
+@media (max-width:600px), (max-height:520px){
+  #top{padding:max(9px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) 0 max(10px,env(safe-area-inset-left))}
+  #brand{font-size:13px;letter-spacing:.12em}
+  #brand small{font-size:7px;letter-spacing:.22em;margin-top:3px}
+  #year{font-size:18px}
+  #stageName{font-size:9px;letter-spacing:.14em}
+  #coins{font-size:25px}
+  #coinsLbl{font-size:10px}
+  #coinBox{top:max(7px,env(safe-area-inset-top));padding:4px 11px 5px;gap:4px}
+  #combo{font-size:10px;padding-left:6px}
+  #topPile{font-size:9px;margin-top:4px}
+  #bottom{padding:0 max(10px,env(safe-area-inset-right)) max(9px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));gap:6px}
+  #bigRow{gap:5px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    /* a half-clipped chip reads as broken; fade the edge so it reads as "more this way" */
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%);
+    mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%)}
+  #bigCount{font-size:9px;letter-spacing:.04em;padding:3px 7px}
+  #bigRow::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;padding:5px 9px;font-size:10px;gap:5px}
+  .chip .dot{width:6px;height:6px}
+  #machine{font-size:11px;line-height:1.5;padding:7px 10px;max-width:100%}
+  #hint{font-size:9px;letter-spacing:.08em}
+  .btn{min-height:44px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+  .btn.slap{min-height:46px;padding:6px 9px 9px}
+  .slapLbl{font-size:11px;letter-spacing:.08em}
+  .slapN{font-size:8px}
+  .slapMeter{left:6px;right:6px;bottom:3px;height:3px}
+  .btnRow{gap:6px}
+  #card{width:100%;max-width:100%;border-radius:14px 14px 0 0;padding:14px 14px max(16px,env(safe-area-inset-bottom))}
+  #cardImg{width:64px;height:64px;flex-basis:64px}
+  #cardName{font-size:19px}
+  #cardMem{font-size:12px;line-height:1.65;margin-top:11px;max-height:32vh;overflow-y:auto}
+  #cardClose{min-height:48px}
+  .ov{padding:max(14px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+  .ovTitle{font-size:11px;letter-spacing:.2em}
+  #museumGrid{grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:7px}
+  .mu{padding:6px}
+  .mu .n{font-size:9px}
+  .mu .b{font-size:8px}
+  .mdTop{gap:12px}
+  .mdArt{width:118px}
+  .mdName{font-size:22px}
+  .mdEn{font-size:10px}
+  .mdJyut{font-size:10px}
+  .mdMem{font-size:12px;line-height:1.7;padding-left:10px}
+  .mdP{font-size:12px}
+  .mdK{font-size:8px;letter-spacing:.2em}
+  .mdBack{min-height:48px;width:100%;align-self:stretch}
+  #doneYear{font-size:48px}
+  #doneLine{font-size:clamp(17px,5.6vw,23px);line-height:1.6;max-width:100%}
+  #doneBeat{font-size:11.5px;line-height:1.8;max-width:100%;padding-left:10px}
+  #sTitle{font-size:clamp(42px,17vw,80px)}
+  #sSub{margin-top:12px;font-size:9px;letter-spacing:.3em}
+  #sBody{margin-top:22px;font-size:11px;line-height:1.9}
+  #sStory{margin-top:20px;max-width:100%}
+  #sStoryTitle{font-size:clamp(17px,5.2vw,20px);letter-spacing:.12em}
+  #sStoryPremise{font-size:10px;line-height:1.8;margin-top:7px}
+  #sGo{margin-top:24px;min-height:50px;padding:0 30px}
+  #museumTabs{margin:-10px 0 8px}
+  .mtab{font-size:10px;letter-spacing:.18em;padding:8px 10px;min-height:44px}
+  .stPremise{font-size:10.5px;line-height:1.8;margin-bottom:12px}
+  .stBeat{gap:9px;padding:9px 0}
+  .stY{flex-basis:40px;font-size:10px;letter-spacing:.08em}
+  .stL{font-size:11.5px;line-height:1.72}
+  .stEnd .stL{font-size:12px}
+  .stEnd .stT{font-size:11px;line-height:1.8}
+  #settingsClose{min-height:44px}
+  .setGroup{padding:15px 0}
+  .setRow{gap:10px}
+  .setName{font-size:13.5px}
+  .setSub{font-size:10.5px;line-height:1.7;max-width:100%}
+  .setWhat{font-size:12px;line-height:1.8;max-width:100%;margin-bottom:12px}
+  .setHint{font-size:10px;line-height:1.65;max-width:100%}
+  .setNote{font-size:9.5px;line-height:1.75;max-width:100%}
+  .switch{min-height:46px;min-width:98px;padding:0 12px}
+  #settingsReset{min-height:52px;font-size:12.5px}
+}
+/* landscape phone: the table is wide and the screen is short, so the HUD
+   collapses to one line at each end */
+@media (max-height:520px) and (orientation:landscape){
+  #bigRow{display:none}
+  #machine{max-width:min(420px,52vw);font-size:10px;padding:6px 9px}
+  #brand small{display:none}
+  #hint{display:none}
+  #topPile{display:none}
+  #coins{font-size:22px}
+  #coinBox{top:max(6px,env(safe-area-inset-top));padding:3px 10px 4px}
+  .btn{min-height:40px;font-size:11px;padding:0 11px}
+  .btn.slap{min-height:44px;padding:5px 8px 8px}
+  #bottom{gap:5px}
+  #doneStats{gap:0 16px;padding:10px 12px}
+  .dsV{font-size:16px}
+  .dsCol{min-width:52px}
+  .mdArt{width:96px}
+  .mdName{font-size:20px}
+  /* 設定 喺橫向電話上要一眼睇完：收窄行距同內距,唔好要人喺張卡入面捲 */
+  #settingsClose{min-height:44px;padding:0 11px}
+  #settings .ovHead{margin-bottom:10px}
+  .setGroup{padding:9px 0;max-width:none}
+  .setK{margin-bottom:6px}
+  .setRow{min-height:44px;gap:10px}
+  .setName{font-size:13px}
+  .setSub{display:none}
+  .setWhat{font-size:11.5px;line-height:1.65;margin:0 0 8px;max-width:none}
+  .setHint{font-size:9.5px;line-height:1.5;margin-top:6px;max-width:none}
+  .setNote{display:none}
+  .switch{min-height:44px}
+  #settingsReset{min-height:44px;font-size:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  #card{transition:none}
+  #start{transition:none}
+  .btn.slap.firing{animation:none}
+  .btn.slap.recharged{animation:none;box-shadow:0 0 0 2px rgba(217,164,65,.55)}
+  .slapFill{transition:none}
+  .mu.got:active{transform:none}
+  /* every new move degrades to a state change, not to nothing */
+  #combo{animation:none}
+  #coinBox.tick #coins{animation:none}
+  .chip.justgot{animation:none}
+  #cardTag.pop{animation:none}
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div id="top">
+    <div id="brand">一蚊雞<small>COIN PUSHER HK</small></div>
+    <div id="coinBox"><div id="coins">0</div><div id="coinsLbl">蚊</div><div id="combo" hidden></div></div>
+    <div id="stageBox"><div id="stageName">清潔．隧道</div><div id="year">1972</div><div id="topPile" hidden></div></div>
+  </div>
+
+  <div id="bottom">
+    <div id="bigWrap"><div id="bigRow"></div><div id="bigCount"></div></div>
+    <div id="machine"></div>
+    <div id="hint">拖 · 選位　放 · 落銀</div>
+    <div class="btnRow">
+      <button class="btn" id="museumBtn">博物館</button>
+      <button class="btn" id="settingsBtn">設定</button>
+      <button class="btn slap" id="slapBtn" aria-label="拍機，仲有 3 次，滿 3 次">
+        <span class="slapRow"><span class="slapLbl">拍機</span><span class="slapN" id="slapN" aria-hidden="true">3/3</span></span>
+        <span class="slapMeter" aria-hidden="true"><i class="slapFill" id="slapFill"></i></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="live" role="status" aria-live="polite" style="position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap"></div>
+
+<div id="card">
+  <div id="cardTag">新收藏</div>
+  <div id="cardTop">
+    <img id="cardImg" alt="">
+    <div>
+      <div id="cardName"></div>
+      <div id="cardJyut"></div>
+      <div id="cardOwner"></div>
+    </div>
+  </div>
+  <div id="cardMem"></div>
+  <button class="btn primary" id="cardClose" style="width:100%">收落博物館</button>
+</div>
+
+<div class="ov" id="museum">
+  <div class="ovHead">
+    <div class="ovTitle" id="museumTitle">香港嘢博物館</div>
+    <button class="btn" id="museumClose">返去</button>
+  </div>
+  <div id="museumTabs" hidden>
+    <button class="mtab on" id="mtabGrid" type="button" aria-pressed="true">藏品</button>
+    <button class="mtab" id="mtabStory" type="button" aria-pressed="false">故事線</button>
+  </div>
+  <div class="ovBody" id="museumScroll">
+    <div id="museumStory" hidden>
+      <p class="stPremise" id="stPremise"></p>
+      <ol class="stList" id="stList"></ol>
+      <div class="stEnd" id="stEnd" hidden>
+        <div class="stL" id="stEndLine"></div>
+        <div class="stT" id="stEndText"></div>
+      </div>
+    </div>
+    <div id="museumGrid"></div>
+    <div id="museumDetail" hidden>
+      <div class="md">
+        <div class="mdTop">
+          <div class="mdArt"><img id="mdImg" alt=""></div>
+          <div class="mdHead">
+            <div class="mdName" id="mdName"></div>
+            <div class="mdEn" id="mdEn" hidden></div>
+            <div class="mdJyut" id="mdJyut" hidden></div>
+            <div class="mdTags" id="mdTags"></div>
+          </div>
+        </div>
+        <div class="mdRule"></div>
+        <div class="mdBlock" id="mdMemWrap" hidden>
+          <div class="mdK">我記得嘅嘢</div>
+          <div class="mdMem" id="mdMem"></div>
+        </div>
+        <div class="mdBlock" id="mdUseWrap" hidden>
+          <div class="mdK">當年點用</div>
+          <div class="mdP" id="mdUse"></div>
+        </div>
+        <div class="mdBlock" id="mdFactWrap" hidden>
+          <div class="mdK">冷知識</div>
+          <div class="mdP" id="mdFact"></div>
+        </div>
+        <div class="mdBlock" id="mdOwnerWrap" hidden>
+          <div class="mdK">喺邊個手</div>
+          <div class="mdOwner" id="mdOwner"></div>
+        </div>
+        <button class="btn mdBack" id="mdBack">← 返去博物館</button>
+        <div class="mdNote" id="mdNote"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ov" id="done">
+  <div id="doneInner">
+    <div class="ovTitle">呢個年代，搞掂喇</div>
+    <div id="doneYear">1972</div>
+    <div id="doneLine" hidden></div>
+    <div id="doneMsg" style="max-width:420px;font-size:13px;line-height:1.9;color:var(--dim)"></div>
+    <div id="doneStats" hidden></div>
+    <div id="doneBeat" hidden></div>
+    <button class="btn primary" id="doneNext">翻新部機</button>
+    <button class="btn" id="doneStay">再推多陣</button>
+  </div>
+</div>
+
+<div class="ov" id="settings" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="ovHead">
+    <div class="ovTitle" id="settingsTitle">設定</div>
+    <button class="btn" id="settingsClose">返去</button>
+  </div>
+  <div class="ovBody" id="settingsScroll">
+    <div class="setGroup">
+      <div class="setK">聲音</div>
+      <div class="setRow">
+        <div class="setMain">
+          <div class="setName">音效</div>
+          <div class="setSub">拍機、跌錢、中大獎嘅聲。熄咗唔會影響玩法。</div>
+        </div>
+        <button class="switch" id="soundToggle" type="button" role="switch" aria-checked="true" aria-label="音效">
+          <span class="knob" aria-hidden="true"><i></i></span>
+          <span id="soundToggleState">開</span>
+        </button>
+      </div>
+    </div>
+    <div class="setGroup">
+      <div class="setK">進度</div>
+      <div class="setName">由頭嚟過</div>
+      <div class="setWhat" id="resetWhat"></div>
+      <button class="btn danger" id="settingsReset" type="button" aria-describedby="resetWhat resetHint">重置進度</button>
+      <div class="setHint" id="resetHint" aria-live="polite">撳一次會問你，3 秒內再撳一次先會真係清。</div>
+    </div>
+    <div class="setNote">唔收錢，唔換獎品，唔會要你等。<br>一蚊雞 · 香港嘢推幣機。進度淨係存喺呢部機嘅瀏覽器入面，冇上傳過。</div>
+  </div>
+</div>
+
+<div id="start">
+  <div id="sTitle">一蚊雞</div>
+  <div id="sSub">COIN PUSHER HK</div>
+  <div id="sBody">一部 1972 年出廠嘅推銀機。<br>推走嘅每一蚊，都係某個人跌低咗嘅嘢。</div>
+  <div id="sStory" hidden>
+    <div id="sStoryTitle"></div>
+    <div id="sStoryPremise"></div>
+  </div>
+  <button class="btn primary" id="sGo">撳一下開始</button>
+</div>
+
+<div id="err"><div><b>載入唔到 three.js</b>請檢查網絡連線，或者用現代瀏覽器再開一次。</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
+<script src="content.js"></script>
+<script src="sim.js"></script>
+<script src="render.js"></script>
+<script src="ui.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
