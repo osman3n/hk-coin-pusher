@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
 const PORT = 9000 + Math.floor(Math.random() * 900);
-const url = 'file:///C:/Users/osman_lam/Projects/WebGame/Coin%20Pusher/index.html?selftest';
+const url = 'https://osman3n.github.io/hk-coin-pusher/?selftest';
 const proc = spawn(SHELL, ['--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
   '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
   `--remote-debugging-port=${PORT}`, '--window-size=1280,800', 'about:blank'], { stdio: 'ignore' });

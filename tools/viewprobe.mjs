@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { writeFileSync } from 'node:fs';
 
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
-const PAGE = 'file:///C:/Users/osman_lam/Projects/WebGame/Coin%20Pusher/index.html';
+const PAGE = 'https://osman3n.github.io/hk-coin-pusher/';
 
 const VIEWPORTS = [
   { name: 'phone-portrait',   w: 390,  h: 844,  dpr: 3, mobile: true },
