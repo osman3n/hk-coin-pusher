@@ -1,0 +1,42 @@
+import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { writeFileSync } from 'node:fs';
+const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
+const BASE = 'https://osman3n.github.io/hk-coin-pusher/';
+const port = 9900 + Math.floor(Math.random() * 90);
+const proc = spawn(SHELL, ['--headless','--disable-gpu','--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader',`--remote-debugging-port=${port}`,'--window-size=390,844','about:blank'], { stdio: 'ignore' });
+let ver = null;
+for (let i = 0; i < 60; i++) { try { ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); break; } catch { await sleep(200); } }
+const ws = new WebSocket(ver.webSocketDebuggerUrl);
+await new Promise(r => ws.addEventListener('open', r));
+let id = 0; const pend = new Map();
+ws.addEventListener('message', ev => { const m = JSON.parse(ev.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } });
+const send = (method, params = {}, sessionId) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params, sessionId })); });
+const mit = await send('Target.createTarget', { url: 'about:blank' });
+const at = await send('Target.attachToTarget', { targetId: mit.result.targetId, flatten: true });
+const S = at.result.sessionId;
+await send('Page.enable', {}, S); await send('Runtime.enable', {}, S);
+await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, S);
+await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, S);
+await send('Page.navigate', { url: BASE }, S);
+for (let i = 0; i < 200; i++) { const r = await send('Runtime.evaluate', { expression: '!!(window.__probe && window.UI)', returnByValue: true }, S); if (r.result?.result?.value) break; await sleep(250); }
+const ev = async e => (await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }, S)).result?.result?.value;
+const shot = async name => { const r = await send('Page.captureScreenshot', { format: 'png' }, S); writeFileSync('shots/final/' + name + '.png', Buffer.from(r.result.data, 'base64')); };
+await sleep(600);
+await shot('01-start');
+await ev(`document.getElementById('sGo').click();`);
+await sleep(2500);
+await shot('02-play');
+await ev(`document.getElementById('settingsBtn').click();`);
+await sleep(500);
+await shot('03-settings');
+await ev(`document.getElementById('settingsClose').click();`);
+await sleep(400);
+await ev(`document.getElementById('museumBtn').click();`);
+await sleep(500);
+await ev(`document.getElementById('mtabStory').click();`);
+await sleep(500);
+await shot('04-story');
+console.log(JSON.stringify({ ok: true, probe: await ev('window.__probe && window.__probe()') }, null, 0).slice(0, 400));
+try { await send('Browser.close'); } catch {}
+ws.close(); proc.kill();
