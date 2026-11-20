@@ -1,3 +1,4 @@
 .agent-teams/
 tools/out/
 shots/_hudzoom.png
+tools/_*.py
