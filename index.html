@@ -17,6 +17,10 @@
 
   /* tone ladder: what you act on > what you aim for > why > fine print */
   --ink-2:#ddd0ba; --ink-3:#c4b7a3; --faint:#6f6557;
+  /* --faint is a whisper at 3.46:1 against --bg, which is below the 4.5:1 AA
+     floor for the 9-11px text it is used on. Same warm hue, lifted to 4.9:1,
+     for places where the words are instructions rather than decoration. */
+  --faint-2:#8b7f6d;
   /* surfaces, one step apart. No panel is separated by a line alone. */
   --panel:#14110d; --panel-2:#0f0c09; --rise:rgba(242,230,208,.06);
   /* radii: pill for state, sm for a control, md for a surface */
@@ -179,7 +183,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   border-radius:0 var(--r-sm) var(--r-sm) 0;opacity:0;transform:translateY(6px);
   transition:opacity .3s,transform .3s;min-height:0}
 #machine.on{opacity:1;transform:none}
-#hint{font-size:11px;letter-spacing:.16em;color:var(--faint);text-align:center;transition:opacity .4s}
+#hint{font-size:11px;letter-spacing:.16em;color:var(--faint-2);text-align:center;transition:opacity .4s}
 
 /* buttons: one fill, one radius, one height. The row is a control strip, so
    every button in it is the same width -- a 10 px difference reads as a bug,
@@ -324,8 +328,11 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 }
 @media (max-width:400px){ .ovTitle{font-size:11px;letter-spacing:.14em} }
 
-#museumGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;
-  padding-bottom:8px}
+/* Nine per decade, so the case is built as 3x3. auto-fill gave eight per row on
+   a desktop and four on a phone, which stranded the ninth prop alone on a line
+   every single time -- the one thing a fixed set of nine should never do. */
+#museumGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
+  max-width:560px;margin:0 auto;padding-bottom:8px}
 .mu{font:inherit;color:inherit;display:block;width:100%;border:1px solid var(--line);
   border-radius:10px;padding:9px;background:rgba(242,230,208,.03);text-align:center;
   opacity:.24;filter:grayscale(1);transition:.3s;cursor:default;-webkit-appearance:none;appearance:none}
@@ -424,34 +431,62 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .dsCol.down .dsV{color:var(--neon)}
 
 /* start */
-#start{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 35%,#1a1610,#070605 70%);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;gap:0;
+/* The start screen is a scrim over the running machine, not a poster in front
+   of it. It used to be opaque, which threw away the only thing that says what
+   this game is: a cabinet full of gold at the bottom of the frame. The gradient
+   stays dense behind the words and clears over the coin bed, so the table is
+   lit and the text still sits on darkness. */
+#start{position:fixed;inset:0;z-index:50;
+  background:
+    linear-gradient(180deg,
+      rgba(7,6,5,.95) 0%,
+      rgba(7,6,5,.90) 24%,
+      rgba(7,6,5,.80) 38%,
+      rgba(7,6,5,.58) 50%,
+      rgba(7,6,5,.18) 60%,
+      rgba(7,6,5,.14) 74%,
+      rgba(6,5,4,.62) 86%,
+      rgba(6,5,4,.95) 100%),
+    radial-gradient(ellipse at 50% 30%,rgba(38,30,20,.55),rgba(6,5,4,0) 62%);
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:0;
   padding:24px 24px max(24px,env(safe-area-inset-bottom));text-align:center;
   transition:opacity .5s}
-/* Slightly above dead centre: a screen split exactly in half leaves equal
-   emptiness above and below, which reads as a page that failed to fill rather
-   than a poster that was composed. Done with padding, not a negative margin,
-   so the title can never be pushed off the top edge. */
-@media (min-height:520px){ #start{padding-bottom:16vh} }
+/* Anchored to the top third. Centred content pushed the title into the middle
+   of the screen, where the machine's header and coin bed live -- the words and
+   the gold fought for the same pixels and both lost. */
+@media (min-height:520px){ #start{padding-top:9vh} }
+@media (max-height:519px){ #start{justify-content:center;padding-top:12px} }
 /* pointer-events does not inherit through to the button, because .btn sets
    pointer-events:auto for itself. An invisible start button therefore kept
    swallowing every tap on the table. visibility:hidden removes the whole
    subtree from hit testing, which is the thing opacity:0 never did. */
 #start.off{opacity:0;pointer-events:none;visibility:hidden}
+/* The HUD is not interactive before the first coin, and at 4% through the scrim
+   its wallet and year badge ghosted behind the title and read as a glitch. */
+body.at-start #hud{opacity:0;pointer-events:none;transition:opacity .45s}
+#hud{transition:opacity .45s}
 #sTitle{font-size:clamp(48px,15vw,92px);font-weight:700;letter-spacing:.14em;line-height:1;
   color:var(--ink);text-shadow:0 0 60px rgba(217,164,65,.35)}
-#sSub{margin-top:18px;font-size:11px;letter-spacing:.42em;color:var(--gold)}
-#sBody{margin-top:22px;font-size:12px;line-height:1.95;color:var(--dim);letter-spacing:.1em}
+#sSub{margin-top:18px;font-size:11px;letter-spacing:.42em;color:var(--gold);
+  text-shadow:0 2px 12px rgba(0,0,0,.9)}
+#sBody{margin-top:22px;font-size:12px;line-height:1.95;color:var(--ink-3);letter-spacing:.1em;
+  text-shadow:0 2px 10px rgba(0,0,0,.85)}
 /* the story line, sitting quietly above the button: a title to remember and
    one sentence that explains the machine before the first coin drops */
 #sStory{margin-top:22px;max-width:44ch;padding:0 4px;text-align:center}
 #sStoryTitle{font-size:15px;letter-spacing:.2em;color:var(--gold);font-weight:600;line-height:1.6}
-#sStoryPremise{margin-top:9px;font-size:11px;line-height:1.85;color:var(--dim);letter-spacing:.06em}
+#sStoryPremise{margin-top:9px;font-size:11px;line-height:1.85;color:var(--ink-3);letter-spacing:.06em;
+  text-shadow:0 2px 10px rgba(0,0,0,.85)}
 #sGo{margin-top:28px;padding:0 34px;letter-spacing:.16em}
 /* the smallest line on the screen, and the only one that tells you what to do
    with your hands -- so it is pinned to the bottom edge, out of the poster */
-#sHint{margin-top:30px;font-size:10.5px;letter-spacing:.14em;
-  color:var(--faint);line-height:1.9}
+/* Pinned to the bottom edge with margin-top:auto, which only works because the
+   column is justify-flex-start. Above the coin bed it measured 2.18:1 against
+   the gold -- the one line telling you how to play was the least readable thing
+   on the screen. Down here the scrim is at its densest and it is not competing
+   with the machine. */
+#sHint{margin-top:auto;padding-top:26px;font-size:10.5px;letter-spacing:.14em;
+  color:var(--faint-2);line-height:1.9;text-shadow:0 2px 10px rgba(0,0,0,.9)}
 
 #err{position:fixed;inset:0;background:#0b0a08;display:none;align-items:center;justify-content:center;
   padding:30px;text-align:center;font-size:13px;line-height:1.9;color:var(--dim);z-index:99}
@@ -545,7 +580,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   #cardClose{min-height:48px}
   .ov{padding:max(14px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
   .ovTitle{font-size:11px;letter-spacing:.2em}
-  #museumGrid{grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:7px}
+  #museumGrid{gap:7px;max-width:420px}
   .mu{padding:6px}
   .mu .n{font-size:9px}
   .mu .b{font-size:8px}
@@ -604,6 +639,12 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   .btn{min-height:40px;font-size:11px;padding:0 11px}
   .btn.slap{min-height:44px;padding:5px 8px 8px}
   #bottom{gap:5px}
+  /* Two buttons stretched across a 844px-wide landscape screen read as grey
+     slabs running off both edges, not as controls. A control strip is as wide
+     as it needs to be and sits centred under the machine. */
+  .btnRow{max-width:520px;margin:0 auto;width:100%}
+  #machine{margin:0 auto}
+  #hint{width:100%}
   #doneStats{gap:0 16px;padding:10px 12px}
   .dsV{font-size:16px}
   .dsCol{min-width:52px}

@@ -266,6 +266,11 @@
       txt(els.museumTitle, '故事線');
     } else {
       if (box) box.hidden = true;
+      // Coming back to the grid from the story tab must also leave the detail
+      // panel, or the grid renders underneath an open prop and both are shown
+      // at once. closeMuseumDetail() is the only thing that knows how to undo
+      // that state (including returning focus to the tile).
+      if (detail && !detail.hidden && state.mdOpen) { UI.closeMuseumDetail(); return; }
       if (grid) grid.hidden = false;
       txt(els.museumTitle, '香港嘢博物館');
     }
@@ -295,6 +300,9 @@
     };
     els.done = $('done');
     els.start = $('start');
+    // The start screen owns the whole frame until the first tap; the HUD joins
+    // it rather than sitting faintly underneath it.
+    document.body.classList.add('at-start');
     els.live = $('live');
     els.settings = $('settings');
     els.settingsScroll = $('settingsScroll');
@@ -340,6 +348,7 @@
     $('sGo').onclick = function () {
       audio();                                  // must be inside the gesture
       els.start.classList.add('off');
+      document.body.classList.remove('at-start');
       if (UI.onStart) UI.onStart();
     };
     $('doneStay').onclick = function () {
@@ -822,7 +831,6 @@
 
     els.museumGrid.hidden = true;
     els.museumDetail.hidden = false;
-    txt(els.museumTitle, '藏品');
     if (els.museumScroll) els.museumScroll.scrollTop = 0;
     focusLater(m.back || $('museumClose'));
   };
