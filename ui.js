@@ -24,7 +24,8 @@
     // The furthest decade reached. Progress is worth keeping separate from the
     // current stage: walking back to 1972 to re-shove a prize must not lock the
     // decades you have already opened.
-    maxStage: 0
+    maxStage: 0,
+    mouthStage: -1
   };
 
   UI.state = state;
@@ -539,6 +540,57 @@
       el.textContent = '';
     }
   }
+
+  // ── the payout tag ────────────────────────────────────────────────────
+  // Pinned to the 3D mouth (main.js calls UI.placeMouthTag with a screen point
+  // every frame). It answers the one question the machine kept dodging: which
+  // part counts. The count is a running total for the decade, so the player can
+  // watch it climb while their aim improves -- and see it stop climbing when
+  // they feed the drain.
+  var mouthTag = { paid: 0, hitTimer: 0 };
+  var mouthTagN = null;
+
+  function mouthTagEl() {
+    if (!mouthTagN) mouthTagN = $('mouthTagN');
+    return mouthTagN;
+  }
+
+  UI.setMouthCount = function (n, stageIdx) {
+    mouthTag.paid = n;
+    if (stageIdx != null) state.mouthStage = stageIdx;
+    var el = mouthTagEl();
+    if (el) el.textContent = n;
+  };
+
+  // The mouth count is progress, not decoration: a player who reloads mid-decade
+  // should find the same number they left, or the readout they were learning to
+  // trust resets for no reason they can see.
+  UI.mouthFor = function (stageIdx) {
+    return state.mouthStage === stageIdx ? (mouthTag.paid || 0) : 0;
+  };
+
+  UI.placeMouthTag = function (x, y, show) {
+    var tag = $('mouthTag');
+    if (!tag) return;
+    if (!show) { tag.hidden = true; return; }
+    tag.hidden = false;
+    // left/top, not transform: the hit animation animates transform.
+    tag.style.left = Math.round(x) + 'px';
+    tag.style.top = Math.round(y) + 'px';
+  };
+
+  UI.mouthHit = function (n, stageIdx) {
+    var tag = $('mouthTag');
+    UI.setMouthCount(n, stageIdx);
+    if (!tag) return;
+    tag.classList.remove('hit');
+    // the mouth count is progress the player is learning to trust
+    if (UI.saveSoon) UI.saveSoon();
+    void tag.offsetWidth;
+    tag.classList.add('hit');
+    clearTimeout(mouthTag.hitTimer);
+    mouthTag.hitTimer = setTimeout(function () { tag.classList.remove('hit'); }, 460);
+  };
 
   UI.coinPaid = function () {
     var now = performance.now();
@@ -1229,10 +1281,29 @@
       localStorage.setItem('yatmangai.save.v1', JSON.stringify({
         v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected,
         seen: state.storySeen, maxStage: state.maxStage || 0,
+        mouth: mouthTag.paid || 0, mouthStage: state.mouthStage,
         // a setting, not progress: 重置進度 must not switch the sound back on
         muted: muted
       }));
     } catch (e) {}
+  };
+
+  // Coins and the mouth count move every few seconds, and writing localStorage
+  // on every payout would stall the frame. A trailing write is enough: the only
+  // thing that can be lost is the last second of play, and pagehide flushes it
+  // when the tab really goes away. beforeunload is not used -- on iOS it fires
+  // unreliably and can be skipped entirely when the page is backgrounded.
+  var saveSoonTimer = 0;
+  UI.saveSoon = function (ms) {
+    if (saveSoonTimer) return;
+    saveSoonTimer = setTimeout(function () {
+      saveSoonTimer = 0;
+      UI.save();
+    }, ms == null ? 2000 : ms);
+  };
+  UI.flushSave = function () {
+    if (saveSoonTimer) { clearTimeout(saveSoonTimer); saveSoonTimer = 0; }
+    UI.save();
   };
 
   UI.load = function () {
@@ -1250,6 +1321,8 @@
       // Older saves carry no maxStage: the stage they were sitting on is the
       // furthest they had reached, so nothing they had opened is taken back.
       state.maxStage = Math.max(num(s.maxStage, 0), state.stageIdx);
+      state.mouthStage = num(s.mouthStage, -1);
+      mouthTag.paid = num(s.mouth, 0);
       return true;
     } catch (e) { return false; }
   };

@@ -89,6 +89,54 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   100%{opacity:1;transform:none}
 }
 #bottom{padding:0 16px max(14px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px}
+/* The payout tag: pinned to the machine's mouth by main.js every frame. It
+   reads as a label stuck on the cabinet, not as HUD floating over the screen,
+   because it is positioned from a 3D point. Gold = the mouth, so the number and
+   the brass are the same colour and the same idea. */
+/* The base transform is not decoration: the caret and the label are centred on
+   the point main.js projects. Without it the hit keyframe (which carries
+   translate(-50%,-50%) so it does not yank the label to the top-left corner)
+   would be the only thing centring it, and the label would jump half its own
+   width every time a coin is paid. Base rule and keyframe must agree. */
+#mouthTag{position:absolute;left:0;top:0;transform:translate(-50%,-50%);pointer-events:none;
+  display:flex;align-items:baseline;gap:5px;padding:3px 8px;border-radius:999px;
+  background:rgba(9,7,5,.82);border:1px solid var(--gold-a38);white-space:nowrap;
+  box-shadow:0 2px 10px rgba(0,0,0,.55)}
+#mouthTag .mtK{font-size:9px;letter-spacing:.10em;color:var(--gold);opacity:.92}
+#mouthTag .mtN{font-size:12px;font-weight:700;color:var(--gold-hi);font-variant-numeric:tabular-nums;
+  line-height:1}
+#mouthTag::before{content:"";position:absolute;left:50%;top:-4px;width:7px;height:7px;
+  margin-left:-3.5px;transform:rotate(45deg);background:rgba(9,7,5,.82);
+  border-left:1px solid var(--gold-a38);border-top:1px solid var(--gold-a38)}
+/* Visibility is owned by [hidden] alone. An opacity keyframe is not used here:
+   a throttled/backgrounded page can hold an animation at its 0% frame, and an
+   opacity:0 first frame made the label invisible for its whole life. */
+#noCount{position:absolute;left:0;top:0;transform:translate(-50%,-50%);pointer-events:none;
+  padding:2px 7px;border-radius:999px;font-size:9px;letter-spacing:.10em;
+  color:#ffd9d2;background:rgba(48,10,8,.86);border:1px solid rgba(200,52,43,.62);
+  white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.55)}
+#noCount.hit{animation:noCountHit .34s ease-out}
+/* The fade-out belongs to the JS timer, not the animation: a keyframe that ends
+   at opacity 0 makes the label invisible while it is still logically showing,
+   which is exactly how it disappeared before anyone could read it. */
+@keyframes noCountHit{
+  0%{transform:translate(-50%,-50%) scale(.9)}
+  18%{transform:translate(-50%,-50%) scale(1.06)}
+  70%{transform:translate(-50%,-50%) scale(1)}
+  100%{transform:translate(-50%,-50%) scale(1)}
+}
+#mouthTag.hit{border-color:var(--gold-hi);animation:mouthHit .42s ease-out}
+/* Every keyframe has to repeat translate(-50%,-50%): a transform in a keyframe
+   replaces the element's whole transform, so a keyframe without it yanks the
+   label back to the top-left corner of the screen. Positioning itself uses
+   left/top for the same reason. */
+@keyframes mouthHit{
+  0%{transform:translate(-50%,-50%) scale(1)}
+  28%{transform:translate(-50%,-50%) scale(1.14)}
+  100%{transform:translate(-50%,-50%) scale(1)}
+}
+@media (max-width:600px),(max-height:520px){ #mouthTag{padding:2px 6px;gap:4px} #mouthTag .mtK{font-size:8px} #mouthTag .mtN{font-size:11px} }
+@media (prefers-reduced-motion:reduce){ #mouthTag.hit{animation:none} #noCount.hit{animation:none} }
 #bigWrap{display:flex;align-items:center;gap:10px;pointer-events:auto;min-width:0}
 #bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto;min-width:0}
 #bigCount{font-size:11px;letter-spacing:.06em;color:var(--gold);flex:0 0 auto;
@@ -580,6 +628,16 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
       <span id="year">1972<i class="caret" aria-hidden="true"></i></span>
     </button>
   </div>
+
+  <!-- The one thing the player kept getting wrong: which part of the machine
+       pays. This tag is pinned to the actual payout mouth in 3D (main.js
+       projects mouthAt every frame), so the label and the brass sit on the same
+       pixel no matter the camera. It is the only HUD that answers "where". -->
+  <div id="mouthTag" hidden><span class="mtK">入呢道先計</span><span class="mtN" id="mouthTagN">0</span></div>
+  <!-- 唔計: shown for a moment at the corner a coin actually fell down. The
+       gold tag above is "counts"; this is the same sentence, negated, at the
+       place it happens. -->
+  <div id="noCount" hidden>唔計</div>
 
   <div id="bottom">
     <div id="bigWrap"><div id="bigRow"></div><div id="bigCount"></div></div>

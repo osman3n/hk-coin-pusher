@@ -51,13 +51,20 @@
     // aim past the edge ~0.18.
     plate: { back: -0.20, fwd: 0.04, period: 2.4 },
     dropZ: -0.30,
-    // The payout slot, as a half-width in x. The table is 1.24 wide, so this is
-    // a third of it. Measured: p90 of the x of a coin crossing the lip is only
-    // 0.15, because a heap funnels itself down the middle on the way out -- so
-    // a slot much wider than this swallows nearly everything that arrives and
-    // the wallet never moves. Narrowing it further than 0.20 buys a steeper
-    // aiming penalty but starves the prizes of the budget they need.
-    payW: 0.20,
+    // The payout slot, as a half-width in x -- so the mouth is 0.28 wide. The
+    // cheeks either side of it are SOLID, which makes this the only way off the
+    // front of the deck and lets the mouth be narrow and still pay: measured
+    // 0.85 aiming at the centre, 0.46 half a width out. A mouth of 0.20 with
+    // solid cheeks paid 0.93 / 0.57, which reads as "it pays whatever you do".
+    payW: 0.14,
+    // Solid brass either side of the mouth. Past it the corner is OPEN and a
+    // coin there falls into the machine: that is the drain, and without it the
+    // deck pays nearly every coin it is ever fed (measured 0.975 from centre
+    // with no drain at all). Wider cheeks leave a smaller drain, so the aiming
+    // gradient softens -- measured centre / half-a-width-out / open corner:
+    //   0.13 -> 0.83 / 0.24   0.24 -> 0.85 / 0.35   0.36 -> 0.86 / 0.43
+    // 0.24 keeps a real penalty for a sloppy aim without punishing every coin.
+    cheekW: 0.24,
     // In front of this line the rails stop: a coin shoved past the side edge
     // here tips into the machine and is gone. That is a real pusher's open
     // front corner, and without it the deck has no drain -- the pile jams
@@ -74,6 +81,7 @@
   var TABLE = DECK.table, PLATE = DECK.plate;
   var DROP_Z = DECK.dropZ, PAY_W = DECK.payW;
   var PLATE_DROP = DECK.plateDrop;
+  var CHEEK_W = DECK.cheekW;
 
   // Fraction of the forward stroke a coin standing on the plate is carried by.
   // See the header: below 1 the coin slides forward relative to the rib and
@@ -460,12 +468,13 @@
         var c = this.coins[i];
         if (c.z - c.r < t.z0) { c.z = t.z0 + c.r; c.vz = Math.abs(c.vz) * 0.3; }
 
-        // The front edge is OPEN. There is no kerb to hold coins back: what
-        // reaches the lip either goes through the slot and pays, or falls off
-        // beside it into the machine. A kerb seems safer but it is a funnel --
-        // it holds the heap and pile pressure squeezes every last coin into the
-        // slot from the side, which measured a 100% return and made the wallet
-        // a decoration.
+        // The lip has SOLID cheeks and one mouth. That is not a kerb: a kerb
+        // is a continuous rail, and it funnels -- it holds the heap and pile
+        // pressure squeezes every last coin into the slot from the side, which
+        // measured a 100% return and made the wallet a decoration. Cheeks are
+        // not a kerb because the mouth is narrow and unguarded: a coin has to
+        // BE at the mouth, and a coin bouncing off a cheek loses its forward
+        // speed before it can come back and try again.
         //
         // Side rails stop at the gutter line. In front of it the corners are
         // open too, so a heap pushed wide spills out there.
@@ -519,14 +528,37 @@
       if (this.onLost) this.onLost(c);
     },
 
-    // Cross the lip. _walls() has already stopped everything outside the slot,
-    // so almost every coin that gets here is inside it -- except a prop, whose
-    // radius can straddle a brass cheek. A prize is never confiscated.
+    // Cross the lip. The brass cheeks either side of the mouth are SOLID, so
+    // a coin that reaches the lip outside the slot bounces back onto the felt
+    // instead of falling. It used to fall straight through the metal: measured
+    // 98% of every lost coin left through the front, and the player watched a
+    // coin sink into a brass block. The mouth is now the only way off the
+    // front of the deck, which is what the player is being asked to aim at.
     _payout: function () {
       for (var i = this.coins.length - 1; i >= 0; i--) {
         var c = this.coins[i];
         if (c.fallT > 0) continue;
         if (!(c.z - c.r * 0.15 > DECK.table.lip)) continue;
+
+        // The mouth, then a brass cheek, then an OPEN corner. A coin past the
+        // cheek is outside the machine's front edge and falls in: that is the
+        // deck's drain, and it is visible -- brass is where you get paid, dark
+        // is where you do not. A cheek is not a kerb because the corner beyond
+        // it is still open, and a coin that bounces off brass loses its forward
+        // speed before it can come back and try again.
+        // The cheek bounces COINS only. A prize is a wide object (r up to 0.13)
+        // and a pair of cheeks 0.24 wide each side of a 0.14 mouth covers most
+        // of the lip, so bouncing prizes too meant a mahjong table sitting at
+        // |x|=0.2 could never cross at all: it was knocked back every step and
+        // the decade locked. A prize that reaches the lip anywhere is a win --
+        // the player shoved it, they keep it.
+        var ax = Math.abs(c.x);
+        if (c.kind !== 'prop' && ax > this.payW && ax <= this.payW + CHEEK_W) {
+          c.z = DECK.table.lip - c.r * 0.15 - 0.002;
+          c.vz = -Math.abs(c.vz) * 0.35 - 0.02;
+          c.vx *= 0.7;
+          continue;
+        }
 
         this.coins.splice(i, 1);
         c.fx = c.x;
@@ -647,7 +679,7 @@
   Sim.TABLE = TABLE; Sim.PLATE = PLATE;
   Sim.DROP_Z = DROP_Z; Sim.FLOOR_Y = FLOOR_Y; Sim.TRAY_Y = FLOOR_Y;
   Sim.TRAY_DWELL = TRAY_DWELL; Sim.TRAY_FADE = TRAY_FADE;
-  Sim.PAY_W = PAY_W; Sim.GRAV = GRAV;
+  Sim.PAY_W = PAY_W; Sim.CHEEK_W = CHEEK_W; Sim.GRAV = GRAV;
   Sim.PLATE_DROP = PLATE_DROP; Sim.RIDE = RIDE;
   Sim.makeRng = makeRng;
   Sim.clamp = clamp;

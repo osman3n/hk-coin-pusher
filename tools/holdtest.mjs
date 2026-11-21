@@ -89,7 +89,18 @@ out.steps.push({ tap: b.drops - a.drops, pass: b.drops - a.drops === 1 });
 // releasing stops it -- not that it hits a particular rate.
 a = await probe();
 await touchStart(195, 400);
-await sleep(5000);
+// Poll for the run instead of trusting a fixed window. The throttling above is
+// not a constant: when the suite runs back to back the machine is still busy
+// from the previous browser, timers stretch further, and a 5000 ms sleep that
+// reliably caught 2 coins alone caught 1 in a batch. Waiting for the condition
+// is the only version that is true on a slow box as well as a fast one.
+const holdStart = await probe();
+let holdSeen = 0;
+for (let i = 0; i < 40; i++) {
+  await sleep(400);
+  holdSeen = (await probe()).drops - holdStart.drops;
+  if (holdSeen >= 3) break;
+}
 const mid = await probe();
 await touchEnd();
 const atRelease = await probe();
@@ -98,7 +109,7 @@ const afterRelease = await probe();
 out.steps.push({
   holdDuring: mid.drops - a.drops,
   holdAfterRelease: afterRelease.drops - atRelease.drops,
-  pass: (mid.drops - a.drops) >= 2 && (afterRelease.drops - atRelease.drops) <= 1
+  pass: (mid.drops - a.drops) >= 3 && (afterRelease.drops - atRelease.drops) <= 1
 });
 
 // ── 3. a drag aims instead of feeding ─────────────────────────────────────

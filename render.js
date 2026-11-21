@@ -1178,6 +1178,11 @@
   // ── scene ──────────────────────────────────────────────────────────────
   var scene, renderer, camera, cabinetGroup, trayGroup;
   var tableMeshes = {}, plateMeshes = {};
+  // The payout mouth, captured when the lip is built so a paid coin can make
+  // the only place that counts flash.
+  var mouthSill = null, mouthMarks = [], mouthLamp = null, mouthAt = null;
+  var mouthGaps = [];
+  var mouthFlash = 0;
   var coinMeshes = [], fallMeshes = [], propMeshes = new Map();
   var coinGeo, propRoot = new THREE.Group();
 
@@ -1608,25 +1613,64 @@ R.room = function () { return roomGroup; };
     l.castShadow = r.castShadow = true;
     g.add(l); g.add(r);
 
-    // The lip, with the payout slot cut out of it. This is the single most
-    // important piece of geometry on the table: it has to make the slot legible
-    // as a hole in an edge, not as a wide-open table that happens to drop coins.
-    // So it is built as two solid brass blocks either side of the slot rather
-    // than one bar across the whole width.
+    // The lip: a narrow brass mouth, solid brass cheeks, then OPEN corners.
+    // The geometry has to say the same thing the physics does, or the player is
+    // being lied to about where a coin counts. Brass is where you are paid;
+    // the dark gap beyond it is the drain that eats the coin.
     var lipMat = M(0xd9a441, 0.35, 0.6);
     var lipThick = 0.018;
     var slotHalf = G.Sim.PAY_W;
-    var lipW = (T.x1 - T.x0) / 2 + 0.025;
-    var blockW = lipW - slotHalf;
+    var cheekW = (G.Sim.CHEEK_W != null) ? G.Sim.CHEEK_W : 0.13;
+    var outerLip = (T.x1 - T.x0) / 2 + 0.025;
     [-1, 1].forEach(function (side) {
-      var block = new THREE.Mesh(new THREE.BoxGeometry(blockW, lipThick, lipThick), lipMat);
-      block.position.set(side * (slotHalf + blockW / 2), y + lipThick / 2, T.lip + 0.008);
-      block.castShadow = true;
-      g.add(block);
+      // solid cheek, exactly as wide as the physics treats it
+      var cheek = new THREE.Mesh(new THREE.BoxGeometry(cheekW, lipThick, lipThick), lipMat);
+      cheek.position.set(side * (slotHalf + cheekW / 2), y + lipThick / 2, T.lip + 0.008);
+      cheek.castShadow = true;
+      g.add(cheek);
+      // and beyond it, a dark empty gap where the coin simply leaves
+      var gapW = outerLip - (slotHalf + cheekW);
+      if (gapW > 0.004) {
+        g.add(box(gapW, 0.002, lipThick, M(0x070503, 0.99), side * (slotHalf + cheekW + gapW / 2),
+          y - 0.004, T.lip + 0.008));
+      }
+      // a low brown wall closing the corner so the gap reads as a drop, not a
+      // missing piece
+      var post = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.030, lipThick), M(0x2b1d12, 0.85));
+      post.position.set(side * outerLip, y + 0.014, T.lip + 0.008);
+      g.add(post);
+      // remember where the drop really is, so a coin that falls there can be
+      // pointed at with a label instead of silently disappearing
+      mouthGaps.push({ side: side, x: side * (slotHalf + cheekW + Math.max(gapW, 0.01) / 2),
+        y: y + lipThick, z: T.lip + 0.008 });
     });
-    // The slot floor: a dark drop throat under the gap, so the opening reads as
-    // depth rather than as a painted stripe.
+
+    // The mouth itself, made loud: a lit gold sill under it and a warm throat
+    // behind it, so at a glance the only place that pays is the only place that
+    // glows.
     g.add(box(slotHalf * 2, 0.004, 0.055, M(0x0a0704, 0.98), 0, y - 0.004, T.lip + 0.030));
+    var sill = new THREE.Mesh(new THREE.BoxGeometry(slotHalf * 2 + 0.014, 0.006, 0.014),
+      new THREE.MeshStandardMaterial({ color: 0xf0c869, roughness: 0.30, metalness: 0.85,
+        emissive: 0xd9a441, emissiveIntensity: 0.55 }));
+    sill.position.set(0, y + lipThick + 0.002, T.lip + 0.010);
+    g.add(sill);
+    mouthSill = sill;
+    // two posts marking the mouth edges, tall enough to be seen from the fitted
+    // camera pitch on a phone
+    [-1, 1].forEach(function (side) {
+      var mark = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.032, 0.008),
+        new THREE.MeshStandardMaterial({ color: 0xffe6a8, roughness: 0.35, metalness: 0.7,
+          emissive: 0xd9a441, emissiveIntensity: 0.7 }));
+      mark.position.set(side * slotHalf, y + lipThick + 0.016, T.lip + 0.008);
+      g.add(mark);
+      mouthMarks.push(mark);
+    });
+    // a soft gold light in the throat: the machine is brighter where it pays
+    var mouthLight = new THREE.PointLight(0xffc266, 0.5, 0.34, 2);
+    mouthLight.position.set(0, y - 0.035, T.lip + 0.055);
+    g.add(mouthLight);
+    mouthLamp = mouthLight;
+    mouthAt = { x: 0, y: y + lipThick, z: T.lip };
 
     // back wall
     var back = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.135, 0.02), railMat);
@@ -1993,6 +2037,7 @@ R.room = function () { return roomGroup; };
     // The landing pools run on their own clock so a paused world still fades
     // them out; they are light on the floor, not a second physics system.
     stepGlows(dt || 0.016);
+    stepMouth(dt || 0.016);
 
     // landSeen only exists to fire once per fall id, and fall ids are recycled
     // forever, so drop the ones that have left the world instead of growing.
@@ -2054,6 +2099,43 @@ R.room = function () { return roomGroup; };
 
   // The camera's resting pose is whatever fitCamera last produced. Snapshot it
   // the first time we render, and again after anything that moves the eye.
+  // ── the payout mouth answers back ───────────────────────────────────────
+  // "Which part counts?" is a question the machine has to answer on its own,
+  // not in a hint line. Every coin through the mouth makes the lip glow: the
+  // same spot flashes whether you are looking at the HUD or the machine.
+  var MOUTH_FLASH_MS = 420;
+  var mouthPeak = 0;
+
+  R.mouthPaid = function () {
+    mouthPeak = Math.min(1, mouthPeak + 0.55);
+    mouthFlash = MOUTH_FLASH_MS / 1000;
+  };
+
+  R.mouthPulse = function () { return mouthFlash; };
+
+  function stepMouth(dt) {
+    var lit = 0;
+    if (mouthFlash > 0) {
+      mouthFlash = Math.max(0, mouthFlash - dt);
+      lit = mouthFlash / (MOUTH_FLASH_MS / 1000);
+    }
+    mouthPeak = Math.max(lit, mouthPeak - dt * 2.6);
+    var g = mouthPeak;
+    if (mouthSill && mouthSill.material) {
+      mouthSill.material.emissiveIntensity = 0.55 + g * 1.9;
+      mouthSill.material.color.setHex(g > 0.5 ? 0xfff0c0 : 0xf0c869);
+    }
+    for (var i = 0; i < mouthMarks.length; i++) {
+      if (mouthMarks[i].material) {
+        mouthMarks[i].material.emissiveIntensity = 0.7 + g * 1.6;
+      }
+    }
+    if (mouthLamp) mouthLamp.intensity = 0.5 + g * 1.5;
+  }
+
+  R.mouthAt = function () { return mouthAt; };
+  R.mouthGaps = function () { return mouthGaps; };
+
   R.render = function () {
     if (shakeT > 0) {
       var now = performance.now();

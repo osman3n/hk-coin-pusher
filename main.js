@@ -52,6 +52,7 @@
     lost: 0,
     drops: 0,
     paid: 0,
+    mouth: 0,   // coins through the payout mouth this decade
     started: false,
     // Prizes waiting to be re-surfaced because they fell off the deck. A prize
     // is never destroyed -- it can be lost, which costs the player the push, but
@@ -68,6 +69,12 @@
     app.state.paidSinceProp = 0;
     app.state.nextPropIdx = 0;
     app.state.respawn = [];
+    // The mouth count is a per-decade number: it is the "how is my aim doing"
+    // readout, so carrying 3,000 coins from 1972 into 1997 would make it
+    // meaningless the moment the table is rebuilt. Restoring a save puts the
+    // same decade's number back.
+    app.state.mouth = UI.mouthFor ? UI.mouthFor(idx) : 0;
+    UI.setMouthCount(app.state.mouth, idx);
     R.setCabinet(st.palette, idx);
     UI.setStage(st, idx);
     Sim.reset(1000 + idx);
@@ -180,9 +187,18 @@
   function onPayout(coin) {
     app.state.coins++;
     app.state.paid++;
+    app.state.mouth++;
     UI.tick(app.state.coins);
     UI.clink();
     UI.coinPaid();
+    // The machine answers where it pays: the lip flashes and the tag on the
+    // mouth counts up. Both come from the same event, so they can never
+    // disagree with the wallet.
+    if (R.mouthPaid) R.mouthPaid();
+    UI.mouthHit(app.state.mouth, app.state.stageIdx);
+    // The wallet moves on every payout; a trailing save keeps it on disk
+    // without writing localStorage sixty times a second.
+    if (UI.saveSoon) UI.saveSoon();
     app.state.paidSinceProp++;
     if (app.state.paidSinceProp >= COINS_PER_PROP) {
       app.state.paidSinceProp = 0;
@@ -194,6 +210,11 @@
   // the player just sees coins vanish and assumes the game is broken.
   function onLost(coin) {
     app.state.lost++;
+    // A coin that leaves anywhere other than the mouth has to say so where it
+    // happened. Two identical-looking exits, one paying and one not, is the
+    // whole confusion; labelling the losing one at the losing corner fixes it
+    // without a tutorial.
+    if (coin && coin.kind === 'coin') showNoCount(coin);
     UI.tick(app.state.coins);
     // A prize that leaves the table always comes back. It is not a coin: the
     // player spent minutes shoving it, and deleting it on a bad bounce would
@@ -325,6 +346,8 @@
     app.state.lost = 0;
     app.state.drops = 0;
     app.state.paid = 0;
+    app.state.mouth = 0;
+    UI.setMouthCount(0, 0);
     // the surface order is cached per stage id; a stale order would keep
     // serving stage-4 props on a 1972 table.
     app.state.order = null;
@@ -372,6 +395,87 @@
   UI.onReset = function () { resetProgress(); };
 
   // ── loop ───────────────────────────────────────────────────────────────
+  // ── 唔計 ───────────────────────────────────────────────────────────────
+  // The drain is the only place a coin is lost, and it is physically two small
+  // dark corners. A player watching the bed cannot tell those from the mouth.
+  // When a coin actually goes down one, a red "唔計" appears over that corner
+  // for a moment: same moment, same screen, next to the gold count -- which is
+  // the only way the two rules become one picture.
+  var noCountEl = null, noCountTimer = 0;
+  var worldVec = null;
+
+  // Put a HUD label on a world point. Positioning uses left/top because the
+  // labels animate transform for their little pop, and an animated transform
+  // silently discards any inline translate.
+  function placeAtWorld(el, wx, wy, wz, dy) {
+    if (!el || !app.camera || !G.THREE) return;
+    if (!worldVec) worldVec = new G.THREE.Vector3();
+    worldVec.set(wx, wy, wz);
+    worldVec.project(app.camera);
+    if (worldVec.z > 1) { el.hidden = true; return; }
+    el.style.left = Math.round((worldVec.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+    el.style.top = Math.round((-worldVec.y * 0.5 + 0.5) * window.innerHeight + dy) + 'px';
+  }
+  function showNoCount(coin) {
+    if (!noCountEl) noCountEl = document.getElementById('noCount');
+    if (!noCountEl) return;
+    var gaps = R.mouthGaps ? R.mouthGaps() : null;
+    var at = null;
+    if (gaps && gaps.length) {
+      at = gaps[0];
+      for (var i = 1; i < gaps.length; i++) {
+        if (Math.abs(gaps[i].x - coin.x) < Math.abs(at.x - coin.x)) at = gaps[i];
+      }
+    }
+    if (!at) return;
+    noCountEl.dataset.wx = at.x;
+    noCountEl.dataset.wy = at.y;
+    noCountEl.dataset.wz = at.z;
+    // Position it now, not on the next frame. At 4 fps in headless the label
+    // could appear at the top-left corner for a whole frame, and on a real phone
+    // a dropped frame would do the same.
+    placeAtWorld(noCountEl, at.x, at.y, at.z, 22);
+    noCountEl.hidden = false;
+    noCountEl.classList.remove('hit');
+    void noCountEl.offsetWidth;
+    noCountEl.classList.add('hit');
+    clearTimeout(noCountTimer);
+    // 1.4 s: long enough to read two Chinese characters without hunting, short
+    // enough that it never piles up when several coins drain in a row.
+    noCountTimer = setTimeout(function () { noCountEl.hidden = true; }, 1400);
+  }
+
+  // The payout tag is a screen element anchored to a world point, so it has to
+  // be re-projected after every camera change -- resize, rotation, and the
+  // silhouette shake all move the mouth on screen. Hiding it while a card is up
+  // keeps it from floating over a modal.
+  var mouthVec = null;
+  function placeMouthTag() {
+    if (!UI.placeMouthTag) return;
+    var at = R.mouthAt && R.mouthAt();
+    if (!at || !app.camera) { UI.placeMouthTag(0, 0, false); return; }
+    if (!mouthVec) mouthVec = new G.THREE.Vector3();
+    mouthVec.set(at.x, at.y, at.z);
+    mouthVec.project(app.camera);
+    var behind = mouthVec.z > 1;
+    var w = window.innerWidth, h = window.innerHeight;
+    var x = (mouthVec.x * 0.5 + 0.5) * w;
+    var y = (-mouthVec.y * 0.5 + 0.5) * h;
+    // Drop the tag clear of the mouth instead of stamping it on top: the lit
+    // sill is the thing the player has to learn to aim at, so covering it with
+    // the label that explains it would be self-defeating. The caret points
+    // back up at the slot.
+    var dy = (h < 520 || w < 420) ? 30 : 26;
+    var show = !behind && !Sim.busy && app.state.started && x > -40 && x < w + 40;
+    UI.placeMouthTag(x, y + dy, show);
+
+    // keep the drain label pinned to its corner while it is up
+    if (noCountEl && !noCountEl.hidden) {
+      placeAtWorld(noCountEl, +noCountEl.dataset.wx, +noCountEl.dataset.wy,
+        +noCountEl.dataset.wz, 22);
+    }
+  }
+
   function frame(now) {
     var rawDt = (now - lastT) / 1000 || 0.016;
     // The step loop needs a small, stable dt for physics; the slap recharge is
@@ -396,6 +500,7 @@
     stepSlap(rawDt);
 
     R.sync(Sim, dt);
+    placeMouthTag();
     R.render();
     requestAnimationFrame(frame);
   }
@@ -494,6 +599,13 @@
     applyStage(loaded ? UI.state.stageIdx : 0, loaded);
 
     wireInput();
+
+    // A phone that backgrounds the page can be killed without another frame, so
+    // the trailing save has to be flushed on the way out.
+    window.addEventListener('pagehide', function () { if (UI.flushSave) UI.flushSave(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden' && UI.flushSave) UI.flushSave();
+    });
 
     // ── viewport ─────────────────────────────────────────────────────────
     // Three different events matter on a phone and only one of them fires on
@@ -837,6 +949,9 @@
       stage: app.state.stageIdx,
       wallet: app.state.coins,
       drops: app.state.drops,
+      // coins that went through the lit mouth this decade -- the number the tag
+      // on the lip is showing, so the readout can be checked, not just admired
+      mouth: app.state.mouth,
       collected: Object.keys(UI.state.collected).length,
       started: app.state.started,
       // The shake meter is the one HUD number a screenshot can lie about, so
