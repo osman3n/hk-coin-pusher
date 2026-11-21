@@ -382,7 +382,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 
 /* museum tabs: 藏品 / 故事線. Only rendered when CONTENT.STORY exists, so a
    build without the story is still the single-view museum it always was. */
-#museumTabs{display:flex;gap:4px;margin:-8px 0 12px;flex:0 0 auto}
+#museumTabs{display:flex;gap:4px;margin:-8px 0 12px;flex:0 0 auto;width:100%;max-width:560px;margin-left:auto;margin-right:auto}
 .mtab{font:inherit;font-size:11px;letter-spacing:.24em;color:var(--dim);background:none;
   border:0;border-bottom:1px solid transparent;padding:9px 12px;min-height:40px;cursor:pointer;
   transition:.2s;-webkit-appearance:none;appearance:none}
@@ -392,10 +392,10 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 
 /* the story line: one year, one thing that happened. Same voice as the
    museum grid, and a locked beat stays a locked beat. */
-#museumStory{padding-bottom:24px}
+#museumStory{padding-bottom:24px;width:100%;max-width:560px;margin:0 auto}
 .stPremise{font-size:11.5px;line-height:1.9;color:var(--dim);letter-spacing:.06em;
   margin:0 0 16px;max-width:46ch}
-.stList{list-style:none;max-width:520px}
+.stList{list-style:none;max-width:520px;margin:0}
 .stBeat{display:flex;gap:12px;align-items:baseline;padding:11px 0;
   border-top:1px solid rgba(242,230,208,.08)}
 .stBeat:first-child{border-top:0}
@@ -499,7 +499,13 @@ body.at-start #hud{opacity:0;pointer-events:none;transition:opacity .45s}
 /* one centred column, the same width as the museum's reading measure. Left
    aligned inside a 1280 px overlay the sheet looked like a form someone had
    abandoned halfway across the page. */
+/* A head spanning the full viewport while its body is a 520-560px column put
+   the title against the left edge and the buttons against the right, with
+   nothing between them but 500px of nothing. The head now sits on the same
+   column as the thing it titles. */
 #settings .ovHead{width:100%;max-width:520px;margin:0 auto 16px}
+#museum .ovHead{width:100%;max-width:560px;margin:0 auto 14px}
+.ovBtns{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 #settingsScroll{display:flex;flex-direction:column}
 #settingsScroll > *{width:100%;max-width:520px;margin-left:auto;margin-right:auto}
 .setGroup{max-width:520px;padding:16px 0;border-top:1px solid rgba(242,230,208,.08)}
@@ -735,8 +741,10 @@ body.at-start #hud{opacity:0;pointer-events:none;transition:opacity .45s}
 <div class="ov" id="museum">
   <div class="ovHead">
     <div class="ovTitle" id="museumTitle">香港嘢博物館</div>
-    <button class="btn" id="museumSettings">設定</button>
-    <button class="btn" id="museumClose">返去</button>
+    <div class="ovBtns">
+      <button class="btn" id="museumSettings">設定</button>
+      <button class="btn" id="museumClose">返去</button>
+    </div>
   </div>
   <div id="museumTabs" hidden>
     <button class="mtab on" id="mtabGrid" type="button" aria-pressed="true">藏品</button>
