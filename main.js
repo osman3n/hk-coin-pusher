@@ -450,6 +450,17 @@
   // silhouette shake all move the mouth on screen. Hiding it while a card is up
   // keeps it from floating over a modal.
   var mouthVec = null;
+  var mouthVecA = null;
+  // Screen point a little in front of the mouth, i.e. the near edge of the lip.
+  function mouthVecAhead(at) {
+    if (!mouthVecA) mouthVecA = new G.THREE.Vector3();
+    mouthVecA.set(at.x, at.y, at.z + 0.09);
+    mouthVecA.project(app.camera);
+    return {
+      x: (mouthVecA.x * 0.5 + 0.5) * window.innerWidth,
+      y: (-mouthVecA.y * 0.5 + 0.5) * window.innerHeight
+    };
+  }
   function placeMouthTag() {
     if (!UI.placeMouthTag) return;
     var at = R.mouthAt && R.mouthAt();
@@ -465,7 +476,18 @@
     // sill is the thing the player has to learn to aim at, so covering it with
     // the label that explains it would be self-defeating. The caret points
     // back up at the slot.
+    //
+    // The clearance has to be measured, not guessed. The lip is a horizontal
+    // band seen at a shallow angle: on a phone held upright the camera looks
+    // down at it and it covers ~30 px, but on a wide low-pitch desktop view the
+    // same band compresses to a handful of pixels and a fixed 26 px offset put
+    // the tag squarely on the slot it was labelling. So project a point a short
+    // way in front of the mouth and take the pixel gap as the drop.
     var dy = (h < 520 || w < 420) ? 30 : 26;
+    if (mouthVec) {
+      var ahead = mouthVecAhead(at);
+      dy = Math.max(dy, Math.round((ahead.y - y) * 1.15 + 14));
+    }
     var show = !behind && !Sim.busy && app.state.started && x > -40 && x < w + 40;
     UI.placeMouthTag(x, y + dy, show);
 
