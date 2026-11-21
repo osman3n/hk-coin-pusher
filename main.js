@@ -853,16 +853,15 @@
         moved: +gesture.moved.toFixed(0),
         gid: gesture.id,
         busy: !!Sim.busy,
-        // gold in the payout slot, red over the gutter: the only HUD cue
-        // that lives on the table, so it has to be provable headlessly
+        // whether the drop point falls inside the payout slot. There is no
+        // marker on the table any more -- a touch screen has no cursor to
+        // explain -- but the slot still matters, so it stays provable.
         inSlot: Math.abs(aim.x) <= Sim.PAY_W
       },
       // a shake is the one cue a screenshot cannot show at all
       shake: R.shakeState ? R.shakeState() : null,
       // so is a landing pool, and it is the only feedback a paid coin leaves
-      glow: R.glowState ? R.glowState() : null,
-      // and so is the marker's colour, which is the one thing on the table
-      // that tells the player where their money is going
+      glow: R.glowState ? R.glowState() : null
     });
   }
 
