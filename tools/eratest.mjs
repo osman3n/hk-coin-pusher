@@ -14,7 +14,8 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
-const PAGE = process.env.GAME_URL || 'file:///' + join(ROOT, 'index.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?bot';
+const RAW = process.env.GAME_URL || 'file:///' + join(ROOT, 'index.html').replace(/\\/g, '/').replace(/ /g, '%20');
+const PAGE = /[?&]bot\b/.test(RAW) ? RAW : RAW + (RAW.indexOf('?') < 0 ? '?' : '&') + 'bot';
 const PORT = 9511 + (Math.floor(Math.random() * 400));
 
 const shotArg = process.argv.find((a) => a.startsWith('--shot='));

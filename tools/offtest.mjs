@@ -11,7 +11,8 @@ import { join } from 'node:path';
 
 const SHELL = 'C:/Users/osman_lam/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
 const ROOT = 'C:/Users/osman_lam/Projects/WebGame/Coin Pusher';
-const PAGE = process.env.GAME_URL || 'file:///' + ROOT.replace(/ /g, '%20') + '/index.html?bot';
+const RAW = process.env.GAME_URL || 'file:///' + ROOT.replace(/ /g, '%20') + '/index.html';
+const PAGE = /[?&]bot\b/.test(RAW) ? RAW : RAW + (RAW.indexOf('?') < 0 ? '?' : '&') + 'bot';
 const PORT = 9680 + Math.floor(Math.random() * 40);
 
 const argNum = (name, dflt) => {
