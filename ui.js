@@ -734,8 +734,12 @@
         var inner = got
           ? '<img alt="" src="' + thumb(id) + '">'
           : '<div class="lockMark">?</div>';
-        d.innerHTML = inner + '<div class="n">' + (got ? esc(def.name) : '未搵到') + '</div>' +
-          '<div class="b">' + (got ? (def.big ? '大件' : '細件') : '') + '</div>';
+        // A locked cell is a lid, not a card: its name is hidden on purpose, so
+        // building eight '未搵到' labels per decade was grey noise around the
+        // few things the player has actually found.
+        d.innerHTML = inner + (got
+          ? '<div class="n">' + esc(def.name) + '</div><div class="b">' + (def.big ? '大件' : '細件') + '</div>'
+          : '');
         els.museumGrid.appendChild(d);
       });
     });

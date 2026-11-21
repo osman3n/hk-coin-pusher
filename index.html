@@ -99,10 +99,10 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
    would be the only thing centring it, and the label would jump half its own
    width every time a coin is paid. Base rule and keyframe must agree. */
 #mouthTag{position:absolute;left:0;top:0;transform:translate(-50%,-50%);pointer-events:none;
-  display:flex;align-items:baseline;gap:4px;padding:2px 6px;border-radius:999px;
+  display:flex;align-items:baseline;gap:5px;padding:3px 8px;border-radius:999px;
   background:rgba(9,7,5,.72);white-space:nowrap}
-#mouthTag .mtK{font-size:8px;letter-spacing:.08em;color:var(--gold);opacity:.80}
-#mouthTag .mtN{font-size:10px;font-weight:700;color:var(--gold-hi);font-variant-numeric:tabular-nums;
+#mouthTag .mtK{font-size:9.5px;letter-spacing:.08em;color:var(--gold);opacity:.88}
+#mouthTag .mtN{font-size:12px;font-weight:700;color:var(--gold-hi);font-variant-numeric:tabular-nums;
   line-height:1;opacity:.92}
 #mouthTag::before{content:"";position:absolute;left:50%;top:-3px;width:5px;height:5px;
   margin-left:-2.5px;transform:rotate(45deg);background:rgba(9,7,5,.72)}
@@ -138,7 +138,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   28%{transform:translate(-50%,-50%) scale(1.14)}
   100%{transform:translate(-50%,-50%) scale(1)}
 }
-@media (max-width:600px),(max-height:520px){ #mouthTag{padding:2px 6px;gap:4px} #mouthTag .mtK{font-size:8px} #mouthTag .mtN{font-size:11px} }
+@media (max-width:600px),(max-height:520px){ #mouthTag{padding:3px 7px;gap:4px} #mouthTag .mtK{font-size:9px} #mouthTag .mtN{font-size:11.5px} }
 @media (prefers-reduced-motion:reduce){ #mouthTag.hit{animation:none} #noCount.hit{animation:none} }
 #bigWrap{display:flex;align-items:center;gap:10px;pointer-events:auto;min-width:0}
 #bigRow{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto;min-width:0}
@@ -184,9 +184,8 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 /* buttons: one fill, one radius, one height. The row is a control strip, so
    every button in it is the same width -- a 10 px difference reads as a bug,
    not as a hierarchy. */
-.btnRow{display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:8px;pointer-events:auto}
+.btnRow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;pointer-events:auto}
 .btnRow .btn{width:100%;min-width:0}
-.btn.icon{font-size:14px;letter-spacing:.08em;padding:0 6px}
 .btn{pointer-events:auto;font:inherit;font-size:12px;letter-spacing:.1em;color:var(--ink);
   background:var(--rise);border:1px solid var(--line);border-radius:var(--r-sm);
   padding:9px 14px;min-height:42px;cursor:pointer;
@@ -229,9 +228,14 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 #card{position:fixed;left:50%;bottom:0;transform:translate(-50%,110%);width:min(420px,92vw);
   background:var(--panel);border:1px solid var(--gold-a38);border-bottom:0;
   border-radius:var(--r-lg) var(--r-lg) 0 0;padding:16px 18px max(20px,env(safe-area-inset-bottom));
-  transition:transform .42s cubic-bezier(.2,.9,.25,1);pointer-events:auto;z-index:20;
-  box-shadow:0 -18px 60px rgba(0,0,0,.7)}
-#card.on{transform:translate(-50%,0)}
+  /* visibility is transitioned with a delay on the way out, so hiding waits
+     for the slide to finish instead of cutting the card off mid-move */
+  transition:transform .42s cubic-bezier(.2,.9,.25,1),visibility 0s .42s;z-index:20;
+  box-shadow:0 -18px 60px rgba(0,0,0,.7);visibility:hidden}
+/* Off-screen is not out of the way: a panel parked at translateY(110%) still
+   hit-tests its top edge, and .btn inside it re-enables pointer-events. It
+   only listens while it is actually on screen. */
+#card.on{transform:translate(-50%,0);visibility:visible;transition:transform .42s cubic-bezier(.2,.9,.25,1),visibility 0s}
 /* the ribbon: a prize needs a name for what just happened, in one glance */
 #cardTag{position:absolute;top:-11px;left:18px;font-size:9.5px;letter-spacing:.18em;
   color:var(--bg);background:var(--gold);border-radius:999px;padding:3px 10px 4px;
@@ -335,7 +339,8 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .mu .n{font-size:10px;margin-top:6px;line-height:1.3;color:var(--dim)}
 .mu.got .n{color:var(--ink)}
 .mu .b{font-size:9px;color:var(--gold);margin-top:2px;letter-spacing:.1em}
-.mu.locked .n{font-size:12px;letter-spacing:.14em;color:#5d554a}
+.mu.locked .n{display:none}
+.mu.locked{opacity:.16}
 .mu.locked .lockMark{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
   font-size:20px;color:#463f36;border:1px dashed rgba(242,230,208,.10);border-radius:6px}
 
@@ -421,18 +426,32 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 /* start */
 #start{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 35%,#1a1610,#070605 70%);
   display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;gap:0;
-  padding:24px;text-align:center;transition:opacity .5s}
-#start.off{opacity:0;pointer-events:none}
+  padding:24px 24px max(24px,env(safe-area-inset-bottom));text-align:center;
+  transition:opacity .5s}
+/* Slightly above dead centre: a screen split exactly in half leaves equal
+   emptiness above and below, which reads as a page that failed to fill rather
+   than a poster that was composed. Done with padding, not a negative margin,
+   so the title can never be pushed off the top edge. */
+@media (min-height:520px){ #start{padding-bottom:16vh} }
+/* pointer-events does not inherit through to the button, because .btn sets
+   pointer-events:auto for itself. An invisible start button therefore kept
+   swallowing every tap on the table. visibility:hidden removes the whole
+   subtree from hit testing, which is the thing opacity:0 never did. */
+#start.off{opacity:0;pointer-events:none;visibility:hidden}
 #sTitle{font-size:clamp(48px,15vw,92px);font-weight:700;letter-spacing:.14em;line-height:1;
   color:var(--ink);text-shadow:0 0 60px rgba(217,164,65,.35)}
 #sSub{margin-top:18px;font-size:11px;letter-spacing:.42em;color:var(--gold)}
-#sBody{margin-top:34px;font-size:12px;line-height:2;color:var(--dim);letter-spacing:.1em}
+#sBody{margin-top:22px;font-size:12px;line-height:1.95;color:var(--dim);letter-spacing:.1em}
 /* the story line, sitting quietly above the button: a title to remember and
    one sentence that explains the machine before the first coin drops */
-#sStory{margin-top:26px;max-width:44ch;padding:0 4px;text-align:center}
+#sStory{margin-top:22px;max-width:44ch;padding:0 4px;text-align:center}
 #sStoryTitle{font-size:15px;letter-spacing:.2em;color:var(--gold);font-weight:600;line-height:1.6}
 #sStoryPremise{margin-top:9px;font-size:11px;line-height:1.85;color:var(--dim);letter-spacing:.06em}
-#sGo{margin-top:34px}
+#sGo{margin-top:28px;padding:0 34px;letter-spacing:.16em}
+/* the smallest line on the screen, and the only one that tells you what to do
+   with your hands -- so it is pinned to the bottom edge, out of the poster */
+#sHint{margin-top:30px;font-size:10.5px;letter-spacing:.14em;
+  color:var(--faint);line-height:1.9}
 
 #err{position:fixed;inset:0;background:#0b0a08;display:none;align-items:center;justify-content:center;
   padding:30px;text-align:center;font-size:13px;line-height:1.9;color:var(--dim);z-index:99}
@@ -454,10 +473,10 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .setRow{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:44px}
 .setMain{min-width:0}
 .setName{font-size:14px;letter-spacing:.04em;color:var(--ink);line-height:1.5}
-.setSub{font-size:11px;line-height:1.7;color:var(--dim);margin-top:4px;max-width:34ch}
+.setSub{font-size:11.5px;line-height:1.65;color:var(--dim);margin-top:4px;max-width:34ch}
 .setWhat{font-size:12.5px;line-height:1.8;color:var(--ink-3);
   border-left:2px solid rgba(200,52,43,.6);padding-left:11px;margin:2px 0 13px;max-width:46ch}
-.setHint{font-size:10.5px;letter-spacing:.03em;line-height:1.7;color:var(--faint);margin-top:10px;
+.setHint{font-size:10px;letter-spacing:.04em;line-height:1.75;color:var(--faint);margin-top:9px;
   max-width:46ch}
 .setNote{font-size:10px;line-height:1.8;letter-spacing:.04em;color:var(--faint);max-width:46ch;
   margin-top:6px;padding-top:14px;border-top:1px solid rgba(242,230,208,.08)}
@@ -651,7 +670,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
         <span class="slapRow"><span class="slapLbl">拍機</span><span class="slapN" id="slapN" aria-hidden="true">3/3</span></span>
         <span class="slapMeter" aria-hidden="true"><i class="slapFill" id="slapFill"></i></span>
       </button>
-      <button class="btn icon" id="museumBtn" aria-label="博物館">櫃</button>
+      <button class="btn" id="museumBtn" aria-label="博物館">博物館</button>
     </div>
   </div>
 </div>
@@ -819,6 +838,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
     <div id="sStoryPremise"></div>
   </div>
   <button class="btn primary" id="sGo">撳一下開始</button>
+  <div id="sHint">按住落銀　拖住揀位　推得越多，跌得越多</div>
 </div>
 
 <div id="err"><div><b>載入唔到 three.js</b>請檢查網絡連線，或者用現代瀏覽器再開一次。</div></div>

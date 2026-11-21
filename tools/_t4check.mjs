@@ -239,15 +239,30 @@ async function main() {
     for (let k = 0; k < 70 && !bigSeen; k++) {
       await s.ev(`window.__bot.advance(1, { dropAt: 0.03, every: 0.55 }); return 1`);
       await sleep(90);
-      bigSeen = await s.evJ(`
+      const snap = await s.evJ(`
         var b = window.__big;
         return JSON.stringify({
           glow: b.glow, card: b.card, tag: b.tag,
           stats: b.stats, collected: JSON.parse(window.__probe()).collected
         });
       `);
-      if (bigSeen && bigSeen.stats && bigSeen.stats.bigPaid > 0) break;
-      bigSeen = null;
+      if (!(snap && snap.stats && snap.stats.bigPaid > 0)) continue;
+      // bigPaid flips inside advance(), which runs the whole second of physics
+      // synchronously. The 40 ms sampler that watches for the card can easily
+      // not have ticked yet, so a break here would read card:0 from a card that
+      // has in fact opened. Give the sampler a beat, then take the snapshot.
+      for (let w = 0; w < 12; w++) {
+        await sleep(60);
+        const after = await s.evJ(`
+          var b = window.__big;
+          return JSON.stringify({
+            glow: b.glow, card: b.card, tag: b.tag,
+            stats: b.stats, collected: JSON.parse(window.__probe()).collected
+          });
+        `);
+        if (after && (after.card === 1 || after.glow > 0)) { bigSeen = after; break; }
+      }
+      if (!bigSeen) bigSeen = snap;
     }
     check('a prop falling is announced', !!(bigSeen && bigSeen.stats.bigPaid > 0),
       { seen: bigSeen, note: bigSeen ? null : 'no bigPayout within 70 game-seconds' });

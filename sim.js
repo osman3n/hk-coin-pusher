@@ -126,7 +126,9 @@
   // is gone. The floor is not a shelf, and lingering clutter reads as a bug.
   var TRAY_DWELL = 0.9;
   var TRAY_FADE = 0.5;
-  var MAX_TRAY = 18;
+  // A settled payout pile is the readout: 40 is enough to look like a real tray
+// and few enough that the shadow-caster count stays predictable.
+  var MAX_TRAY = 40;
   var MAX_COINS = 480, MAX_LAYER = 12;
 
   // Gravity for the payout drop.
@@ -618,7 +620,10 @@
         // guessed, so a win lands in the tray instead of beside it.
         var bt = 0.21;
           var bx = c.kind === 'prop' ? 0 : (this.rng() - 0.5) * 0.30;
-          var bz = (BOX.z0 + BOX.z1) / 2 + (this.rng() - 0.5) * 0.07;
+          // Target the middle of the tray, not its far edge: solved to z near
+          // z1 the coin's own radius put its rim past the front lip, so a coin
+          // that had clearly landed hung over the wall and was clipped by it.
+          var bz = (BOX.z0 + BOX.z1) / 2 + (this.rng() - 0.5) * 0.05;
           c.fvx = clamp((bx - c.x) / bt, -0.60, 0.60);
           c.fvz = clamp((bz - c.z) / bt, -0.10, 0.90);
         } else {
@@ -694,9 +699,24 @@
         // longest. Anything else is the tail of a fall and leaves quickly.
         var dwell = TRAY_DWELL;
         if (c.spill) dwell *= 1.9;
-        else if (inBox) dwell *= 3.0;
+        // Six times the base: a payout tray that empties in 2.7 s can never
+        // show a pile, which makes the one surface that proves the counter is
+        // working look like an empty bright plate. Long enough to accumulate,
+        // short enough that the cap is what limits it, not the clock.
+        else if (inBox) dwell *= 6.0;
         if (c.age > dwell) this.fall.splice(i, 1);
       }
+    },
+
+    // How long a fallen coin stays on screen before it is removed. Owned here
+    // because the sim is what actually deletes it: the renderer used to keep its
+    // own copy of these multipliers and fell out of step the moment one changed.
+    fallDwell: function (c) {
+      var d = TRAY_DWELL;
+      if (!c) return d;
+      if (c.spill) d *= 1.9;
+      else if (c.inBox) d *= 6.0;
+      return d;
     },
 
     layerHistogram: function () {

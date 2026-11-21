@@ -1455,7 +1455,10 @@ R.init = function (canvas) {
     // a shade lighter, so the whole machine flattened into one value. A dark
     // inset panel behind the deck gives the gold something to sit against.
     var insetMat = M(0x0e0906, 0.95);
-    scene.add(box(1.22, 0.9, 0.012, insetMat, 0, 0.14, -0.435));
+    // It used to be 0.90 tall and centred at y 0.14, which put its top edge
+    // 0.29 above the header -- a black slab reading as an unlit void above the
+    // machine. Sized to the cabinet it belongs to.
+    scene.add(box(1.22, 0.60, 0.012, insetMat, 0, 0.02, -0.435));
 
     buildRoom();
     trayGroup = buildTray();
@@ -1500,9 +1503,14 @@ R.init = function (canvas) {
     [-0.60, 0.00, -0.44], [0.60, 0.00, -0.44],
     [-0.60, 0.00, 0.30], [0.60, 0.00, 0.30],
     [-0.62, 0.10, 0.10], [0.62, 0.10, 0.10],
-    [0.00, 0.34, -0.36],
-    [0.00, -0.42, 0.481, 1.06],
-    [-0.12, -0.42, 0.485, 1.06], [0.12, -0.42, 0.485, 1.06]
+    [0.00, 0.34, -0.36]
+    // Three points used to live here at y = -0.42, z ~ 0.48: the floor where
+    // the payout landed before the catch tray moved up under the mouth. Nothing
+    // occupies that spot now, but they were still the binding constraint on
+    // desktop, landscape and small-phone framing -- measured dist 3.32 vs 2.16
+    // without them, i.e. the machine was drawn 54% smaller than it needed to be
+    // to leave room for an empty patch of floor. The tray's own corners are
+    // added from G.Sim.BOX below, so the guarantee follows the tray instead.
   ];
   var camDir = new THREE.Vector3(0, 0.5655, 0.8249);
   var framing = { dist: 1.6976, aspect: 1, pitch: 0.6, portrait: false };
@@ -1586,6 +1594,11 @@ R.init = function (canvas) {
       // where the player looks after every win, so it has to be inside the
       // guarantee like everything else. Read from the sim so moving the tray
       // cannot silently move it out of frame again.
+      // No band: measured margins at 1.0 are 12px (landscape) and 24px
+      // (desktop). Tightening to 0.90 buys clearance but shrinks the machine;
+      // loosening to 1.06 grows it but leaves 8 and 12px. 1.0 is the balanced
+      // point and the machine is already 54% larger than before the stale
+      // floor points were removed.
       pts = FIT_POINTS.concat([
         [B.x0, B.y + B.wall, B.z1], [B.x1, B.y + B.wall, B.z1],
         [B.x0, B.y, B.z1], [B.x1, B.y, B.z1]
@@ -1825,8 +1838,12 @@ R.room = function () { return roomGroup; };
     // A tray lamp bright enough to read the pile also blows out the tray floor
     // into a white plate -- and a white plate looks like nothing landed. Keep it
     // low and put it behind the pile, so the coins are rimmed rather than washed.
-    var lamp = new THREE.PointLight(0xffbe66, 0.16, 0.42, 2);
-    lamp.position.set(cx, B.y + 0.055, cz + 0.055);
+    // It used to sit 55 mm over the floor at 0.16 intensity, which from that
+    // distance made a hot white plate out of what has to read as dark felt with
+    // gold on it -- an empty white tray looks like nothing landed. Raised to the
+    // mouth and dimmed: the job is to rim the coins, not to light a page.
+    var lamp = new THREE.PointLight(0xffbe66, 0.09, 0.62, 2);
+    lamp.position.set(cx, B.y + 0.19, cz + 0.02);
     g.add(lamp);
 
     return g;
@@ -2119,7 +2136,8 @@ R.room = function () { return roomGroup; };
           }
           fm2.prop.scale.setScalar(Math.min(1.5, Math.max(0.7, fc.r / 0.11)));
         }
-        if (fm2.prop) fm2.prop.visible = fc.kind === 'prop' && fc.fy > floorY - 0.01 && (fc.age || 0) <= (G.Sim.TRAY_DWELL || 0.9);
+        if (fm2.prop) fm2.prop.visible = fc.kind === 'prop' && fc.fy > floorY - 0.01 &&
+          (fc.age || 0) <= ((G.Sim.fallDwell && G.Sim.fallDwell(fc)) || (G.Sim.TRAY_DWELL || 0.9));
         if (onFloor) {
           // A landed coin lies FLAT, and the flat pose must not be derived from
           // the tumble angle. The old `rotation.x *= 0.75` damped a value that
@@ -2140,9 +2158,7 @@ R.room = function () { return roomGroup; };
         // spilled coin lives nearly twice as long (the sim owns that number),
         // so the fade has to be read from the coin rather than assumed.
         var age = fc.age || 0;
-        var dwell = (G.Sim.TRAY_DWELL || 0.9);
-        if (fc.spill) dwell *= 1.9;
-        else if (fc.inBox) dwell *= 3.0;
+        var dwell = (G.Sim.fallDwell && G.Sim.fallDwell(fc)) || (G.Sim.TRAY_DWELL || 0.9);
         var fade = G.Sim.TRAY_FADE || 0.5;
         var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
