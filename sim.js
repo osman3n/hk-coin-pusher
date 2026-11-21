@@ -36,25 +36,28 @@
   var DECK = {
     key: 'main',
     y: 0,
-    table: { x0: -0.62, x1: 0.62, z0: -0.52, z1: 0.34, lip: 0.34 },
+    table: { x0: -0.62, x1: 0.62, z0: -0.52, z1: 0.32, lip: 0.28 },
     // The plate's stroke, as the z of its leading rib. `back` must stay in
     // front of dropZ so a dropped coin lands on the slab; `fwd` must stay well
     // behind the lip or the plate itself would sweep coins straight into the
     // slot and the reservoir would disappear.
-    // `fwd` is measured, not guessed. With the rib stopping at 0.10 the gap to
-    // the lip is so short that a sparse pile is still shoved straight through
-    // and the return rate pinned at 1.00 for every friction value tried. At 0.02
-    // the gap holds a few coins that are only moved by pile pressure from
-    // behind, which is the mechanism that makes aiming matter: centre aim pays
-    // ~0.88, a half-slot aim ~0.14.
-    plate: { back: -0.22, fwd: 0.02, period: 2.4 },
+    // `fwd` and `lip` are measured, not guessed. A rib that reaches the lip
+    // pins the return rate at 1.00 (the plate becomes a conveyor); a gap of
+    // 0.32 -- four coin diameters -- turns out to be too wide in a different
+    // way, because a prize crossing `front + r` can then only be moved by the
+    // weight of coins behind it, so a prize out near the rail never moves
+    // again (measured 1-3 payouts out of 8). The 0.24 gap below keeps real
+    // pile pressure in play: centre aim pays ~0.89, a half-slot aim ~0.64,
+    // aim past the edge ~0.18.
+    plate: { back: -0.20, fwd: 0.04, period: 2.4 },
     dropZ: -0.30,
     // The payout slot, as a half-width in x. The table is 1.24 wide, so this is
     // a third of it. Measured: p90 of the x of a coin crossing the lip is only
-    // 0.15, because a heap funnels itself down the middle on the way out -- so a
-    // slot much wider than 0.22 swallows 96% of what arrives and the wallet
-    // never moves.
-    payW: 0.22,
+    // 0.15, because a heap funnels itself down the middle on the way out -- so
+    // a slot much wider than this swallows nearly everything that arrives and
+    // the wallet never moves. Narrowing it further than 0.20 buys a steeper
+    // aiming penalty but starves the prizes of the budget they need.
+    payW: 0.20,
     // In front of this line the rails stop: a coin shoved past the side edge
     // here tips into the machine and is gone. That is a real pusher's open
     // front corner, and without it the deck has no drain -- the pile jams

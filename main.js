@@ -10,6 +10,9 @@
   var C = G.CONTENT, Sim = G.Sim, R = G.R, UI = G.UI;
   var canvas, app = {}, lastT = 0, acc = 0;
   var PROPS_PER_STAGE = 9;
+  // Bumped whenever the surfacing rules change, so a test can tell an old
+  // cached copy from a stale read of the source.
+  var BUILD = 'gate-3';
   var COINS_PER_PROP = 14;
   // One literal for the starting wallet. The reset used to wipe the wallet and
   // forget to give it back, which left a fresh player staring at a dead machine
@@ -84,31 +87,59 @@
   // Small props come out first and thickest: they are the pile's filler, and
   // they teach the player that the table pays before the big ones ask for
   // real effort. Big props are interleaved so none sits last as a wall.
+  // The three big prizes are the gate for the next decade, so they must not be
+  // buried behind six small ones. Interleave big-first: the player meets one
+  // within the first two surfaces, and all three are on the deck before the
+  // small ones run out.
   function stageOrder(st) {
     var order = [], s = st.small.slice(), b = st.big.slice();
-    var i;
-    for (i = 0; i < s.length; i++) {
-      order.push(s[i]);
-      if (i % 2 === 1 && b.length) order.push(b.shift());
+    var i, n = Math.max(s.length, b.length);
+    for (i = 0; i < n; i++) {
+      if (i < b.length) order.push(b[i]);
+      if (i < s.length) order.push(s[i]);
     }
-    while (b.length) order.push(b.shift());
     return order;
+  }
+
+  // Is there still a big prize that has never been put on the deck or won?
+  // Those three gate the decade, so they outrank a small one coming back.
+  function bigStillWaiting(st) {
+    var order = app.state.order || [];
+    for (var i = 0; i < st.big.length; i++) {
+      var id = st.big[i];
+      if (UI.state.collected[id] || Sim.hasProp(id)) continue;
+      if (order.indexOf(id) >= app.state.nextPropIdx) return true;
+    }
+    return false;
   }
 
   function maybeSurfaceProp() {
     var st = stage();
-    // A prize that fell off comes back before anything new is introduced: the
-    // player already saw it and lost it, so making them earn a different one
-    // instead would read as the game forgetting what they did.
-    while (app.state.respawn.length) {
-      var rid = app.state.respawn.shift();
-      if (!rid || UI.state.collected[rid] || Sim.hasProp(rid)) continue;
-      surfaceProp(rid, st);
-      return true;
-    }
     if (!app.state.order || app.state.orderStage !== st.id) {
       app.state.order = stageOrder(st);
       app.state.orderStage = st.id;
+      app.state.nextPropIdx = 0;
+    }
+    // A prize that fell off comes back before anything new is introduced: the
+    // player already saw it and lost it, so making them earn a different one
+    // instead would read as the game forgetting what they did. The one
+    // exception is the gate -- a small one coming back must not delay a big
+    // one that has never appeared, or the decade stalls.
+    if (app.state.respawn.length) {
+      var gate = bigStillWaiting(st);
+      var pick = -1;
+      for (var r = 0; r < app.state.respawn.length; r++) {
+        var rid = app.state.respawn[r];
+        if (!rid || UI.state.collected[rid] || Sim.hasProp(rid)) continue;
+        var isBig = st.big.indexOf(rid) >= 0;
+        if (!gate || isBig) { pick = r; break; }
+      }
+      if (pick >= 0) {
+        var back = app.state.respawn.splice(pick, 1)[0];
+        return surfaceProp(back, st);
+      }
+      // Everything queued is a small prize and the gate is still closed: fall
+      // through and let the order put a big one out.
     }
     var order = app.state.order;
     while (app.state.nextPropIdx < order.length) {
@@ -125,8 +156,17 @@
   function surfaceProp(id, st) {
     // Prizes surface near the back of the one deck, so they have the whole
     // table to be shoved across before they reach the payout slot.
+    //
+    // They surface from the chute at the back centre, and tightly so. Past
+    // `front + r` a prize can only be moved by the weight of coins behind it;
+    // the coin bed thins out toward the rails, so a prize that appears near
+    // |x|=0.5 can never be shifted again and blocks the whole decade. Measured
+    // over all 21 big prizes: |x|<=0.30 pays 73% (17 stalls), <=0.16 pays 95%,
+    // <=0.10 pays 100%. A stall is unrecoverable, so the band has to be the
+    // one that never stalls.
     var T = Sim.DECK.table, by = Sim.DECK.y;
-    var x = T.x0 + 0.10 + Math.random() * (T.x1 - T.x0 - 0.20);
+    var band = 0.10;
+    var x = (Math.random() * 2 - 1) * band;
     var z = T.z0 + 0.10 + Math.random() * 0.10;
     var c = Sim.spawn(x, z, 'prop', id);
     c.fallT = 0.38; c.cy = by + 0.26;
@@ -780,12 +820,16 @@
 
   function probe() {
     return JSON.stringify({
+      build: BUILD,
       cam: R.camera ? R.camera.position.toArray().map(function (v) { return +v.toFixed(3); }) : null,
       coins: Sim.coins.length,
       fall: Sim.fall.length,
       fallY: Sim.fall.slice(0, 3).map(function (c) { return +c.fy.toFixed(3); }),
       floorY: Sim.FLOOR_Y,
       props: Sim.countProps(),
+      order: app.state.order ? app.state.order.slice() : null,
+      nextPropIdx: app.state.nextPropIdx,
+      respawn: app.state.respawn ? app.state.respawn.slice() : null,
       hist: Sim.layerHistogram(),
       plate: +Sim.front.toFixed(3),
       onPlate: Sim.countOnPlate(),

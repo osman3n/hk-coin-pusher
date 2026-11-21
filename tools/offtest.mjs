@@ -64,6 +64,19 @@ async function evaluate(expr, session) {
   return r.result ? r.result.value : undefined;
 }
 
+// Re-evaluate until `done(value)` accepts it. Headless timers run several
+// times slower than their nominal delay, so anything that waits on a
+// setTimeout has to be polled rather than slept through.
+async function pollFor(expr, session, done, budgetMs) {
+  const until = Date.now() + (budgetMs || 12000);
+  let last;
+  for (;;) {
+    last = JSON.parse(await evaluate(expr, session));
+    if (done(last) || Date.now() > until) return last;
+    await sleep(300);
+  }
+}
+
 async function shot(session, path) {
   const c = await send('Page.captureScreenshot', { format: 'png' }, session);
   writeFileSync(path, Buffer.from(c.data, 'base64'));
@@ -186,8 +199,10 @@ async function main() {
   })()`, sessionId).then(JSON.parse);
   out.steps.push({ respawn: respawn });
 
-  await sleep(3200);
-  const respawnLanded = await evaluate(`(function(){
+  // The queue is drained by setTimeout(..., 2200), and a headless timer runs
+  // far slower than its nominal delay (measured: a 300 ms timer fired at
+  // 2435 ms). Poll for the award instead of trusting a fixed sleep.
+  const respawnLanded = await pollFor(`(function(){
     var s = window.Sim;
     var id = ${JSON.stringify(respawn.id)};
     var st = CONTENT.STAGES[window.__bot.state.stageIdx];
@@ -199,7 +214,7 @@ async function main() {
       stillUncollected: !UI.state.collected[id],
       big: st.big.indexOf(id) >= 0
     });
-  })()`, sessionId).then(JSON.parse);
+  })()`, sessionId, function (v) { return v.onTable >= 1; }, 12000);
   out.steps.push({ respawnLanded: respawnLanded });
 
   // ── and a played-out run must still show coins leaving the table ────────
