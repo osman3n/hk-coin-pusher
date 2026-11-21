@@ -49,10 +49,21 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 #brand{font-size:15px;letter-spacing:.16em;font-weight:700;line-height:1;color:var(--ink-2);
   text-shadow:0 2px 12px #000}
 #brand small{display:block;font-size:8px;letter-spacing:.28em;color:var(--faint);font-weight:400;margin-top:5px}
-#stageBox{text-align:right;padding-top:1px}
+/* The era is the one control that is also information: a player who wants a
+   different decade reaches for the year they are already reading. It is a
+   button, not decoration, so it gets a real hit area and a focus ring. */
+#stageBox{display:block;text-align:right;padding:4px 9px;margin:-4px -9px 0 0;
+  background:none;border:1px solid transparent;border-radius:var(--r-md);
+  font:inherit;color:inherit;cursor:pointer;pointer-events:auto;
+  -webkit-appearance:none;appearance:none;transition:border-color .18s,background .18s}
+#stageBox:hover{border-color:var(--line)}
+#stageBox:active,#stageBox.on{border-color:var(--gold-a38);background:var(--gold-a14)}
+#stageBox:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+#year .caret{display:inline-block;width:0;height:0;margin-left:6px;vertical-align:3px;
+  border:4px solid transparent;border-top-color:var(--gold);opacity:.7}
 #stageName{font-size:10px;letter-spacing:.18em;color:var(--dim);line-height:1.5}
 #year{font-size:22px;font-weight:600;line-height:1.15;letter-spacing:.02em;color:var(--ink-2);
-  font-variant-numeric:tabular-nums}
+  font-variant-numeric:tabular-nums;display:block}
 /* the counter sits on its own plate: over a mid-brown cabinet, floating text
    lost half its contrast, and the number is the one thing that must not */
 #coinBox{position:absolute;left:50%;top:max(9px,env(safe-area-inset-top));transform:translateX(-50%);
@@ -191,8 +202,10 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 #cardClose{margin-top:14px}
 
 /* overlays: a whole room, not a frosted sheet. The blur used to cost a
-   full-screen backdrop-filter for a difference nobody can see over #0b0a08. */
-.ov{position:fixed;inset:0;background:rgba(6,5,4,.965);
+   full-screen backdrop-filter for a difference nobody can see over #0b0a08.
+   Solid, not .965: at 3.5% transparency the lit cabinet and a bed of gold
+   coins still read through as grey silhouettes behind the text. */
+.ov{position:fixed;inset:0;background:#060504;
   display:none;flex-direction:column;z-index:30;padding:max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom))}
 .ov.on{display:flex}
 .ovHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex:0 0 auto;gap:10px}
@@ -201,6 +214,59 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   touch-action:pan-y;min-height:0}
 
 .ovHead .btn{padding:8px 11px;min-height:40px;font-size:11px}
+
+/* 年代: a list of decades, not a settings form. One row per shop the machine
+   has stood in. The row you are standing in cannot be tapped; a row you have
+   not reached yet says so instead of pretending to be disabled for no reason. */
+#erasScroll{display:flex;flex-direction:column;gap:0;max-width:520px;margin:0 auto;width:100%}
+#erasNow{display:flex;flex-direction:column;gap:10px;padding:0 0 18px}
+#erasNow .goLine{font-size:12px;line-height:1.8;color:var(--dim)}
+#erasNow .goLine b{color:var(--ink-2);font-weight:600}
+.era{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;
+  width:100%;min-height:56px;padding:10px 12px;margin:0;font:inherit;text-align:left;
+  background:none;border:0;border-top:1px solid rgba(242,230,208,.08);
+  color:inherit;cursor:pointer;-webkit-appearance:none;appearance:none;
+  transition:background .16s}
+.era:hover{background:rgba(242,230,208,.04)}
+.era:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.era .ey{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;
+  color:var(--ink-2);letter-spacing:.01em;min-width:58px}
+.era .es{min-width:0;display:block}
+/* .n and .g are spans inside a span: without display:block the shop name and
+   the count run together as '士 0 / 9 件', which reads like a typo. */
+.era .es .n{display:block;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.era .es .g{display:block;font-size:10px;letter-spacing:.14em;color:var(--faint);margin-top:3px}
+.era .ev{font-size:10px;letter-spacing:.14em;color:var(--faint);white-space:nowrap}
+.era.cur{cursor:default;background:var(--gold-a14)}
+.era.cur .ey,.era.cur .es .n{color:var(--gold-hi)}
+.era.cur .ev{color:var(--gold)}
+.era.back .ev{color:var(--dim)}
+.era.locked{cursor:default;opacity:.42}
+.era.locked .ev{color:var(--faint)}
+.erasNote{font-size:10.5px;line-height:1.8;color:var(--faint);max-width:46ch;
+  padding-top:16px;margin-top:6px;border-top:1px solid rgba(242,230,208,.08)}
+
+/* 翻新: a reset has to end out loud. The settings sheet can say '搞好喇' all it
+   likes, but the player is looking at the table, so the table has to hand back
+   a fresh 1972 with nothing in the cabinet. Same card language as #done. */
+#renew .ovTitle{text-align:center;color:var(--gold);letter-spacing:.24em}
+#renew .ovBody{align-items:center;display:flex;flex-direction:column}
+#renewInner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:16px;width:100%}
+#renewYear{font-size:64px;font-weight:700;letter-spacing:.02em;line-height:1;
+  color:var(--gold-hi);text-shadow:0 0 46px rgba(217,164,65,.32)}
+#renewMsg{max-width:min(100%,24em);font-size:13px;line-height:1.9;color:var(--dim)}
+#renewStats{display:flex;flex-wrap:wrap;justify-content:center;gap:0 22px;
+  padding:12px 16px;border-radius:var(--r-md);background:var(--panel-2);
+  border:1px solid var(--gold-a14);max-width:min(100%,440px)}
+#renewOk{width:100%;max-width:300px}
+@media (max-width:400px){
+  #renewYear{font-size:48px}
+  #renewMsg{font-size:12px;line-height:1.85}
+  .era{min-height:52px;padding:9px 10px;gap:10px}
+  .era .ey{font-size:17px;min-width:50px}
+  .era .es .n{font-size:12px}
+}
 @media (max-width:400px){ .ovTitle{font-size:11px;letter-spacing:.14em} }
 
 #museumGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;
@@ -454,10 +520,15 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 /* landscape phone: the table is wide and the screen is short, so the HUD
    collapses to one line at each end */
 @media (max-height:520px) and (orientation:landscape){
-  #bigRow{display:none}
+  /* Hide the whole collection strip, not just the chips: hiding #bigRow alone
+     left a lone "0 / 9" pill floating over the table with nothing to label.
+     Progress is one tap away in 櫃. */
+  #bigWrap{display:none}
   #machine{max-width:min(420px,52vw);font-size:10px;padding:6px 9px}
   #brand small{display:none}
-  #hint{display:none}
+  /* Keep one short line on landscape phones. Hiding it entirely removed the
+     only text explaining press-vs-drag on the orientation most players hold. */
+  #hint{font-size:10px;padding:5px 10px}
   #coins{font-size:22px}
   #coinBox{top:max(6px,env(safe-area-inset-top));padding:3px 10px 4px}
   .btn{min-height:40px;font-size:11px;padding:0 11px}
@@ -504,7 +575,10 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
   <div id="top">
     <div id="brand">一蚊雞<small>COIN PUSHER HK</small></div>
     <div id="coinBox"><div id="coins">0</div><div id="coinsLbl">蚊</div><div id="combo" hidden></div></div>
-    <div id="stageBox"><div id="stageName">清潔．隧道</div><div id="year">1972</div></div>
+    <button id="stageBox" type="button" aria-haspopup="dialog" aria-label="揀年代">
+      <span id="stageName">清潔．隧道</span>
+      <span id="year">1972<i class="caret" aria-hidden="true"></i></span>
+    </button>
   </div>
 
   <div id="bottom">
@@ -602,6 +676,32 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
     <div id="doneBeat" hidden></div>
     <button class="btn primary" id="doneNext">翻新部機</button>
     <button class="btn" id="doneStay">再推多陣</button>
+  </div>
+</div>
+
+<div class="ov" id="eras" role="dialog" aria-modal="true" aria-labelledby="erasTitle">
+  <div class="ovHead">
+    <div class="ovTitle" id="erasTitle">年代</div>
+    <button class="btn" id="erasClose">返去</button>
+  </div>
+  <div class="ovBody" id="erasScroll">
+    <div id="erasNow"></div>
+    <div id="erasList"></div>
+    <div class="erasNote">推完一個年代，下一個先會開。行過嘅年代隨時可以返去，櫃入面嘅嘢唔會冇咗。</div>
+  </div>
+</div>
+
+<div class="ov" id="renew" role="dialog" aria-modal="true" aria-labelledby="renewTitle">
+  <div class="ovHead">
+    <div class="ovTitle" id="renewTitle">部機翻新咗</div>
+  </div>
+  <div class="ovBody">
+    <div id="renewInner">
+      <div id="renewYear">1972</div>
+      <div id="renewMsg"></div>
+      <div id="renewStats"></div>
+      <button class="btn primary" id="renewOk">開始推</button>
+    </div>
   </div>
 </div>
 

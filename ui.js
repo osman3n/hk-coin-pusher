@@ -20,7 +20,11 @@
     mdId: null,         // which prop the panel is showing
     storySeen: {},      // stage id -> true, so a beat is read once per save
     storyTab: false,    // the museum is showing 故事線 instead of 藏品
-    settingsFromMuseum: false
+    settingsFromMuseum: false,
+    // The furthest decade reached. Progress is worth keeping separate from the
+    // current stage: walking back to 1972 to re-shove a prize must not lock the
+    // decades you have already opened.
+    maxStage: 0
   };
 
   UI.state = state;
@@ -293,6 +297,11 @@
     els.live = $('live');
     els.settings = $('settings');
     els.settingsScroll = $('settingsScroll');
+    els.stageBox = $('stageBox');
+    els.eras = $('eras');
+    els.erasNow = $('erasNow');
+    els.erasList = $('erasList');
+    els.renew = $('renew');
 
     $('museumBtn').onclick = function () { UI.openMuseum(); };
     // 返去 walks back one level, exactly like Escape.
@@ -312,6 +321,12 @@
     // two controls a player actually touches mid-game -- 拍機 and the prize
     // cabinet -- and the switch and reset hang off the cabinet instead.
     $('museumSettings').onclick = function () { UI.openSettings(); };
+    // 年代 lives on the HUD, behind the year the player is already reading.
+    // A separate button on the table would be a fourth control on a screen
+    // that is supposed to have two.
+    els.stageBox.onclick = function () { UI.openEras(); };
+    $('erasClose').onclick = function () { UI.closeEras(); };
+    $('renewOk').onclick = function () { UI.closeRenew(); };
     $('settingsClose').onclick = function () { UI.closeSettings(); };
     $('soundToggle').onclick = function () { UI.toggleMuted(); };
     $('settingsReset').onclick = function () { armReset(); };
@@ -336,6 +351,14 @@
       els.done.classList.remove('on');
       if (UI.onNextStage) UI.onNextStage();
     };
+    els.eras.onclick = function (e) {
+      if (e.target !== els.eras) return;
+      UI.closeEras();
+    };
+    els.renew.onclick = function (e) {
+      if (e.target !== els.renew) return;
+      UI.closeRenew();
+    };
     els.museum.onclick = function (e) {
       if (e.target !== els.museum) return;
       if (state.mdOpen) UI.closeMuseumDetail();
@@ -354,6 +377,8 @@
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
       if (els.card.classList.contains('on')) { UI.closeCard(); return; }
+      if (els.renew.classList.contains('on')) { e.preventDefault(); UI.closeRenew(); return; }
+      if (els.eras.classList.contains('on')) { e.preventDefault(); UI.closeEras(); return; }
       if (els.settings.classList.contains('on')) { e.preventDefault(); UI.closeSettings(); return; }
       if (!els.museum.classList.contains('on')) return;
       e.preventDefault();
@@ -419,8 +444,16 @@
   UI.setStage = function (stage, idx) {
     state.stageIdx = idx;
     state.stage = stage;
-    els.year.textContent = stage.year;
+    els.year.innerHTML = '';
+    els.year.appendChild(document.createTextNode(stage.year));
+    var caret = document.createElement('i');
+    caret.className = 'caret';
+    caret.setAttribute('aria-hidden', 'true');
+    els.year.appendChild(caret);
     els.stageName.textContent = stage.name;
+    if (els.stageBox) {
+      els.stageBox.setAttribute('aria-label', '年代：' + stage.year + ' ' + stage.name + '，撳一下揀年代');
+    }
     document.body.style.setProperty('--gold',
       '#' + stage.palette.sign.toString(16).padStart(6, '0'));
     renderBigChips(stage);
@@ -786,6 +819,158 @@
   };
   UI.isMuseumOpen = function () { return els.museum.classList.contains('on'); };
 
+  // ── 年代: walk the machine back and forward ───────────────────────────
+  // The machine is one physical object that has stood in seven shops. Deciding
+  // to stay in a decade after clearing it used to be a dead end: the done card
+  // offered 再推多陣 and nothing else, so 1980 was only reachable by clearing
+  // 1972 again. Now the year on the HUD opens the list of every shop.
+  function paintEras() {
+    var cur = state.stageIdx;
+    var top = Math.max(state.maxStage, cur);
+    var now = C.STAGES[cur];
+
+    // The header says what standing here costs and offers the one move the
+    // list exists to make possible: go on.
+    els.erasNow.innerHTML = '';
+    if (now) {
+      var line = document.createElement('div');
+      line.className = 'goLine';
+      var got = stageCount(now);
+      line.innerHTML = '你而家喺 <b>' + esc(now.year) + ' · ' + esc(now.shop) + '</b>　' +
+        got.got + ' / ' + got.total + ' 件';
+      els.erasNow.appendChild(line);
+    }
+    var nextIdx = cur + 1;
+    var cleared = now ? UI.bigComplete(now) : false;
+    if (nextIdx < C.STAGES.length && (nextIdx <= top || cleared || nextIdx <= cur)) {
+      var next = C.STAGES[nextIdx];
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn primary';
+      b.id = 'erasNext';
+      b.textContent = (nextIdx <= top ? '去 ' : '翻新去 ') + next.year + ' · ' + next.shop;
+      b.onclick = function () { UI.goStage(nextIdx); };
+      els.erasNow.appendChild(b);
+    } else if (nextIdx < C.STAGES.length && !cleared) {
+      // Say why it is not there. A missing button reads as a bug; a sentence
+      // reads as a rule the player can act on.
+      var why = document.createElement('div');
+      why.className = 'goLine';
+      var need = now ? now.big.length : 3;
+      var have = 0;
+      if (now) now.big.forEach(function (id) { if (state.collected[id]) have++; });
+      why.innerHTML = '收齊呢個年代嘅 <b>' + need + '</b> 件大件（而家 ' + have +
+        ' 件），部機先會翻新去下一個年代。';
+      els.erasNow.appendChild(why);
+    }
+
+    els.erasList.innerHTML = '';
+    C.STAGES.forEach(function (st, i) {
+      var cnt = stageCount(st);
+      var open = i <= top;
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'era' + (i === cur ? ' cur' : '') +
+        (i < cur && open ? ' back' : '') + (open ? '' : ' locked');
+      row.dataset.idx = String(i);
+      if (i === cur) {
+        row.disabled = true;
+        row.setAttribute('aria-current', 'true');
+      } else if (!open) {
+        row.disabled = true;
+      }
+      var label = st.year + ' ' + st.shop + '，' +
+        (i === cur ? '而家喺呢度' : (!open ? '未開' : (i < cur ? '返去' : '去')));
+      row.setAttribute('aria-label', label);
+      row.innerHTML =
+        '<span class="ey">' + esc(st.year) + '</span>' +
+        '<span class="es"><span class="n">' + esc(st.shop) + '</span>' +
+        '<span class="g">' + cnt.got + ' / ' + cnt.total + ' 件</span></span>' +
+        '<span class="ev">' + (i === cur ? '而家' : (!open ? '未開' : (i < cur ? '返去' : '去'))) +
+        '</span>';
+      if (!row.disabled) {
+        row.onclick = function () { UI.goStage(i); };
+      }
+      els.erasList.appendChild(row);
+    });
+
+    // Let a tab order user land on 去 1980 first: the list is long.
+    focusLater($('erasNext') || $('erasClose'));
+  }
+
+  function stageCount(st) {
+    var ids = (st.big || []).concat(st.small || []);
+    var got = 0;
+    ids.forEach(function (id) { if (state.collected[id]) got++; });
+    return { got: got, total: ids.length };
+  }
+
+  UI.openEras = function () {
+    if (!els.eras) return;
+    paintEras();
+    els.eras.classList.add('on');
+    setPageInert(true);
+    if (els.erasScroll) els.erasScroll.scrollTop = 0;
+  };
+
+  UI.closeEras = function () {
+    if (!els.eras) return;
+    els.eras.classList.remove('on');
+    setPageInert(false);
+    focusLater(els.stageBox);
+  };
+
+  UI.isErasOpen = function () { return !!els.eras && els.eras.classList.contains('on'); };
+
+  // main.js owns the world; ui.js only asks for the move.
+  UI.goStage = function (idx) {
+    if (!(idx >= 0 && idx < C.STAGES.length)) return;
+    UI.closeEras();
+    if (UI.onGoStage) UI.onGoStage(idx);
+  };
+
+  // main.js calls this whenever the machine moves, so the HUD, the save and
+  // the list all agree on which decade is open.
+  UI.setMaxStage = function (n) {
+    state.maxStage = Math.max(state.maxStage || 0, num(n, 0));
+  };
+
+  // ── 翻新: the reset has to be visible from the table ──────────────────
+  // The settings sheet could say '搞好喇' as often as it liked; a player who
+  // tapped 重置進度 and looked up saw the same machine, the same coins and the
+  // same 0/9, and concluded nothing happened. This is the receipt.
+  UI.showRenew = function (info) {
+    if (!els.renew) return;
+    info = info || {};
+    var yearEl = $('renewYear'), msgEl = $('renewMsg'), statsEl = $('renewStats');
+    txt(yearEl, info.year != null ? String(info.year) : '1972');
+    txt(msgEl, info.msg ||
+      '櫃清空咗，年代由第一間舖再開始。之前搵到嘅嘢冇喺度喇。');
+    if (statsEl) {
+      var cells = [
+        { k: '年代', v: num(info.stages, 0), cls: 'up' },
+        { k: '收藏', v: num(info.got, 0), cls: 'up' },
+        { k: '蚊', v: num(info.coins, 0), cls: 'up' }
+      ];
+      statsEl.innerHTML = cells.map(function (c) {
+        return '<div class="dsCol ' + c.cls + '"><div class="dsV">' + c.v +
+          '</div><div class="dsK">' + c.k + '</div></div>';
+      }).join('');
+    }
+    els.renew.classList.add('on');
+    setPageInert(true);
+    focusLater($('renewOk'));
+  };
+
+  UI.closeRenew = function () {
+    if (!els.renew) return;
+    els.renew.classList.remove('on');
+    setPageInert(false);
+    focusLater(els.stageBox);
+  };
+
+  UI.isRenewOpen = function () { return !!els.renew && els.renew.classList.contains('on'); };
+
   // ── settings ───────────────────────────────────────────────────────────
   // Same overlay family as the museum (#settings is a .ov), same inert +
   // focus contract. Nothing here invents a second modal system: the page is
@@ -923,7 +1108,9 @@
   UI.isSettingsOpen = function () { return els.settings.classList.contains('on'); };
 
   function activeOverlay() {
+    if (els.renew.classList.contains('on')) return els.renew;
     if (els.settings.classList.contains('on')) return els.settings;
+    if (els.eras.classList.contains('on')) return els.eras;
     if (els.museum.classList.contains('on')) return els.museum;
     return null;
   }
@@ -1041,7 +1228,7 @@
     try {
       localStorage.setItem('yatmangai.save.v1', JSON.stringify({
         v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected,
-        seen: state.storySeen,
+        seen: state.storySeen, maxStage: state.maxStage || 0,
         // a setting, not progress: 重置進度 must not switch the sound back on
         muted: muted
       }));
@@ -1060,6 +1247,9 @@
       state.storySeen = (s.seen && typeof s.seen === 'object') ? s.seen : {};
       // older saves have no `muted`; leave the default (on) in that case
       if (typeof s.muted === 'boolean') muted = s.muted;
+      // Older saves carry no maxStage: the stage they were sitting on is the
+      // furthest they had reached, so nothing they had opened is taken back.
+      state.maxStage = Math.max(num(s.maxStage, 0), state.stageIdx);
       return true;
     } catch (e) { return false; }
   };

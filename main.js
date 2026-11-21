@@ -49,7 +49,12 @@
     lost: 0,
     drops: 0,
     paid: 0,
-    started: false
+    started: false,
+    // Prizes waiting to be re-surfaced because they fell off the deck. A prize
+    // is never destroyed -- it can be lost, which costs the player the push, but
+    // it always comes back, or a bad shove would end the stage's collection.
+    respawn: [],
+    won: {}
   };
 
   function stage() { return C.STAGES[app.state.stageIdx]; }
@@ -59,7 +64,8 @@
     var st = C.STAGES[idx];
     app.state.paidSinceProp = 0;
     app.state.nextPropIdx = 0;
-    R.setCabinet(st.palette);
+    app.state.respawn = [];
+    R.setCabinet(st.palette, idx);
     UI.setStage(st, idx);
     Sim.reset(1000 + idx);
     Sim.onPayout = onPayout;
@@ -68,6 +74,9 @@
     Sim.seedPile(56 + idx * 4);
     // coins are the wallet and survive an era change; only the table is rebuilt
     UI.setCoins(app.state.coins);
+    // Walking back to 1972 to re-shove a lost prize must not lock 1980 behind
+    // it, so the furthest decade reached is its own number.
+    UI.setMaxStage(idx);
     if (!keepSave) UI.say(st.open, 4200);
   }
 
@@ -88,6 +97,15 @@
 
   function maybeSurfaceProp() {
     var st = stage();
+    // A prize that fell off comes back before anything new is introduced: the
+    // player already saw it and lost it, so making them earn a different one
+    // instead would read as the game forgetting what they did.
+    while (app.state.respawn.length) {
+      var rid = app.state.respawn.shift();
+      if (!rid || UI.state.collected[rid] || Sim.hasProp(rid)) continue;
+      surfaceProp(rid, st);
+      return true;
+    }
     if (!app.state.order || app.state.orderStage !== st.id) {
       app.state.order = stageOrder(st);
       app.state.orderStage = st.id;
@@ -97,18 +115,24 @@
       var id = order[app.state.nextPropIdx++];
       if (UI.state.collected[id]) continue;
       if (Sim.hasProp(id)) continue;
-      // Prizes surface near the back of the one deck, so they have the whole
-      // table to be shoved across before they reach the payout slot.
-      var T = Sim.DECK.table, by = Sim.DECK.y;
-      var x = T.x0 + 0.10 + Math.random() * (T.x1 - T.x0 - 0.20);
-      var z = T.z0 + 0.10 + Math.random() * 0.10;
-      var c = Sim.spawn(x, z, 'prop', id);
-      c.fallT = 0.38; c.cy = by + 0.26;
-      var isBig = st.big.indexOf(id) >= 0;
-      if (isBig) { UI.say(pick(C.MACHINE.bigFall)); }
-      return c;
+      return surfaceProp(id, st);
     }
     return null;
+  }
+
+  // Put one prize on the deck. Shared by first-time surfacing and by the
+  // respawn queue, so a returned prize arrives exactly the way it first did.
+  function surfaceProp(id, st) {
+    // Prizes surface near the back of the one deck, so they have the whole
+    // table to be shoved across before they reach the payout slot.
+    var T = Sim.DECK.table, by = Sim.DECK.y;
+    var x = T.x0 + 0.10 + Math.random() * (T.x1 - T.x0 - 0.20);
+    var z = T.z0 + 0.10 + Math.random() * 0.10;
+    var c = Sim.spawn(x, z, 'prop', id);
+    c.fallT = 0.38; c.cy = by + 0.26;
+    var isBig = st.big.indexOf(id) >= 0;
+    if (isBig) { UI.say(pick(C.MACHINE.bigFall)); }
+    return c;
   }
 
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
@@ -131,11 +155,23 @@
   function onLost(coin) {
     app.state.lost++;
     UI.tick(app.state.coins);
-    if (app.state.lost % 2 === 1) UI.say(pick(C.MACHINE.lost), 1800);
+    // A prize that leaves the table always comes back. It is not a coin: the
+    // player spent minutes shoving it, and deleting it on a bad bounce would
+    // make the collection unwinnable through no fault of theirs.
+    if (coin.kind === 'prop' && coin.prop && !app.state.won[coin.prop]) {
+      if (app.state.respawn.indexOf(coin.prop) < 0) app.state.respawn.push(coin.prop);
+      UI.say('跌咗件嘢落機底……等陣再推出嚟。', 2600);
+      // Do not make the comeback depend on the player paying 14 more coins: a
+      // prize lost at the end of a stage would never return.
+      setTimeout(function () { maybeSurfaceProp(); }, 2200);
+    } else if (app.state.lost % 2 === 1) {
+      UI.say(pick(C.MACHINE.lost), 1800);
+    }
   }
 
   function onBigPayout(coin) {
     var id = coin.prop;
+    app.state.won[id] = true;
     app.state.coins += 3;
     UI.tick(app.state.coins);
     UI.rumble();
@@ -178,9 +214,31 @@
       return;
     }
     Sim.busy = false;
-    app.state.stageIdx++;
-    applyStage(app.state.stageIdx);
+    // applyStage() owns stageIdx, the cabinet and the coin face; bumping the
+    // index here as well made the two disagree after a reset.
+    applyStage(app.state.stageIdx + 1);
     UI.save();
+  };
+
+  // 年代 picker (the year on the HUD). Same door as 翻新部機, reachable any
+  // time -- including mid-stage, which is the point: 再推多陣 is a choice, not
+  // a life sentence.
+  UI.onGoStage = function (idx) {
+    if (!(idx >= 0 && idx < C.STAGES.length)) return;
+    if (idx === app.state.stageIdx) return;
+    // Going forward needs the decade you are standing in cleared; going back is
+    // always free. The list already greys out the rest, but the click reaches
+    // here through a button, so the rule is checked again where it matters.
+    var cur = app.state.stageIdx;
+    if (idx > cur && !UI.bigComplete(stage())) {
+      UI.say('收齊呢個年代三件大件，部機先會搬。', 3200);
+      return;
+    }
+    Sim.busy = false;
+    app.state.stageIdx = idx;
+    applyStage(idx, true);
+    UI.save();
+    UI.say(C.STAGES[idx].open, 3600);
   };
 
   // 再推多陣: same stage, and the world has to start again. The done card froze
@@ -210,6 +268,10 @@
     S.storyTab = false;
     S.stageIdx = 0;
     S.coins = START_COINS;
+    // The furthest decade reached is progress too: leaving it at 6 would let a
+    // reset player tap the year and walk straight into 2026 with an empty
+    // cabinet, which is the opposite of starting over.
+    S.maxStage = 0;
 
     // 3. game state. Nothing of the old run may leak into the new one.
     app.state.stageIdx = 0;
@@ -227,6 +289,8 @@
     // serving stage-4 props on a 1972 table.
     app.state.order = null;
     app.state.orderStage = null;
+    app.state.respawn = [];
+    app.state.won = {};
 
     // 4. hand the table back: the done card may have frozen it, and the reset
     //    button is reachable while a card is up.
@@ -251,6 +315,19 @@
 
     // 6. write the fresh save last, so what is on disk matches what is on screen.
     UI.save();
+
+    // 7. and say it out loud. The settings sheet is a small panel behind the
+    //    table; a one-line hint inside it was invisible from the machine, so
+    //    the player pressed 重置進度, looked up, saw the same coins and the
+    //    same 0/9, and concluded the button did nothing.
+    var fresh = C.STAGES[0];
+    UI.showRenew({
+      year: fresh.year,
+      stages: 1,
+      got: 0,
+      coins: START_COINS,
+      msg: '櫃清空咗，年代返到第一間舖。之前搵到嘅嘢冇喺度喇。'
+    });
   }
   UI.onReset = function () { resetProgress(); };
 
@@ -278,46 +355,9 @@
     // but the player should still get their strength back.
     stepSlap(rawDt);
 
-    // aim marker. The slot is the whole game: a marker that looks the same in
-    // the gutter as in the mouth teaches the player nothing, so it changes
-    // colour exactly where the money changes hands.
-    if (app.aimRibbon) {
-      app.aimRibbon.position.x = aim.x;
-      app.aimRibbon.visible = !Sim.busy;
-      paintAimSlot();
-    }
-
-    // The upper deck is worth looking at only if it has a number, and the
-    // number only has to be right, not fresh: poll it every 16 frames.
-
     R.sync(Sim, dt);
     R.render();
     requestAnimationFrame(frame);
-  }
-
-  var frameNo = 0;
-
-  // gold while the marker is inside the payout slot, red while it is over the
-  // gutter -- the same colour the gutter strips are painted on the table
-  var aimInSlot = null;
-  function paintAimSlot() {
-    var g = app.aimRibbon;
-    if (!g || !g.userData || !g.userData.head) return;
-    var payW = Sim.PAY_W;
-    var inSlot = Math.abs(aim.x) <= payW;
-    if (inSlot === aimInSlot) return;
-    aimInSlot = inSlot;
-    var col = inSlot ? 0xffd28a : 0xc8342b;
-    g.userData.head.material.color.setHex(col);
-    if (g.userData.core) g.userData.core.material.color.setHex(col);
-    if (g.userData.headMat) g.userData.headMat.opacity = inSlot ? 0.92 : 0.75;
-  }
-
-  // the probe has to read the ACTUAL material, not the flag it was set from
-  function aimHeadHex() {
-    var g = app.aimRibbon;
-    if (!g || !g.userData || !g.userData.head) return null;
-    return '#' + g.userData.head.material.color.getHexString();
   }
 
   // ── slap ───────────────────────────────────────────────────────────────
@@ -413,10 +453,6 @@
     if (!loaded || app.state.coins <= 0) app.state.coins = START_COINS;
     applyStage(loaded ? UI.state.stageIdx : 0, loaded);
 
-    // aim ribbon: a thin glowing line above the drop rail
-    app.aimRibbon = buildAimRibbon();
-    R.scene.add(app.aimRibbon);
-
     wireInput();
 
     // ── viewport ─────────────────────────────────────────────────────────
@@ -466,63 +502,6 @@
     // ui.js paints a placeholder budget until main.js reports in; make the real
     // numbers the first thing the button ever shows.
     publishSlap(true);
-  }
-
-  // The aim marker. It used to be a flat 300 mm plate lying at rail height,
-  // which the cabinet side panel cut in half -- on screen it read as a stray
-  // gold diagonal rather than an indicator. Now it is a short marker in the
-  // drop corridor plus a ring on the table where the coin will actually land.
-  function buildAimRibbon() {
-    var THREE = G.THREE;
-    var g = new THREE.Group();
-    var mat = new THREE.MeshBasicMaterial({
-      color: 0xffb347, transparent: true, opacity: 0.5, depthWrite: false
-    });
-    var solid = new THREE.MeshBasicMaterial({
-      color: 0xffd28a, transparent: true, opacity: 0.85, depthWrite: false
-    });
-    // a short dashed guide down the drop corridor, not a full table-length line
-    for (var i = 0; i < 3; i++) {
-      var d = new THREE.Mesh(new THREE.PlaneGeometry(0.010, 0.035), mat);
-      d.rotation.x = -Math.PI / 2;
-      d.position.set(0, 0.058, -0.30 + i * 0.062);
-      g.add(d);
-    }
-    // landing ring, sitting just above the pile so it is never buried
-    var head = new THREE.Mesh(new THREE.RingGeometry(0.030, 0.040, 22), solid);
-    head.rotation.x = -Math.PI / 2;
-    head.position.set(0, 0.070, G.Sim.DROP_Z);
-    g.add(head);
-    var core = new THREE.Mesh(new THREE.CircleGeometry(0.016, 18), mat);
-    core.rotation.x = -Math.PI / 2;
-    core.position.set(0, 0.070, G.Sim.DROP_Z);
-    g.add(core);
-
-    // The gutter, drawn on the paying deck before the player commits. The cost
-    // of a bad aim used to be invisible until after the fact: the coin left the
-    // front edge and became scrap with no warning. Two dim red strips sit over
-    // everything outside the payout slot, so the risk is legible while aiming.
-    var dk = G.Sim.DECK;
-    var payW = dk.payW;
-    var tw = (dk.table.x1 - dk.table.x0) / 2;  // one table half-width
-    var gW = tw - payW;                       // width the gutter occupies
-    var gz0 = dk.table.z0;
-    var gMat = new THREE.MeshBasicMaterial({
-      color: 0x8c2f24, transparent: true, opacity: 0.15, depthWrite: false
-    });
-    var gutters = [];
-    [-1, 1].forEach(function (side) {
-      var m = new THREE.Mesh(new THREE.PlaneGeometry(gW, 0.42), gMat);
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(side * (payW + gW / 2), 0.052, gz0 + 0.21);
-      g.add(m);
-      gutters.push(m);
-    });
-    g.userData.head = head;
-    g.userData.core = core;
-    g.userData.headMat = solid;
-    g.userData.gutters = gutters;
-    return g;
   }
 
   // ── input ──────────────────────────────────────────────────────────────
@@ -832,7 +811,7 @@
         busy: !!Sim.busy,
         // gold in the payout slot, red over the gutter: the only HUD cue
         // that lives on the table, so it has to be provable headlessly
-        inSlot: aimInSlot
+        inSlot: Math.abs(aim.x) <= Sim.PAY_W
       },
       // a shake is the one cue a screenshot cannot show at all
       shake: R.shakeState ? R.shakeState() : null,
@@ -840,7 +819,6 @@
       glow: R.glowState ? R.glowState() : null,
       // and so is the marker's colour, which is the one thing on the table
       // that tells the player where their money is going
-      aim: aimHeadHex()
     });
   }
 

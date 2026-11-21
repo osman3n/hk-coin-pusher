@@ -43,6 +43,22 @@
   // geometry has to match the simulation exactly, so read the radius from sim.js
   var COIN_R = (G.Sim && G.Sim.COIN_R) || 0.036;
   var COIN_MAT = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.34, metalness: 0.85 });
+  // Four coin designs across seven eras, swapped every two stages. The table is
+  // the whole screen; if the coin never changes, six era changes later the game
+  // still looks like 1972 with different paint. Each style is a different metal,
+  // a different thickness and a different face, so the pile reads differently
+  // even in a thumbnail.
+  var COIN_STYLES = [
+    // 1972 / 1980 -- brass, thick, plain: the coin this game is named after
+    { body: 0xc9a227, edge: 0x8e6f18, rough: 0.34, metal: 0.85, thick: 0.42, rings: 0, face: 0xd8b23a },
+    // 1997 / 2003 -- cupro-nickel, thinner, a raised inner ring
+    { body: 0xb98a3c, edge: 0x6f4d1c, rough: 0.30, metal: 0.88, thick: 0.34, rings: 1, face: 0xc9a054 },
+    // 2010 / 2020 -- steel, thin, two rings: the coin that stopped being brass
+    { body: 0xa8b0b8, edge: 0x5f676e, rough: 0.28, metal: 0.92, thick: 0.30, rings: 2, face: 0xbcc4cc },
+    // 2026 -- polished bimetal: steel body, gold face
+    { body: 0xc4cbd2, edge: 0x8a8f96, rough: 0.22, metal: 0.95, thick: 0.38, rings: 2, face: 0xd9a441 }
+  ];
+  var coinStyle = 0;
   var COIN_EDGE = new THREE.MeshStandardMaterial({ color: 0x8e6f18, roughness: 0.5, metalness: 0.7 });
 
   function box(w, h, d, mat, x, y, z) {
@@ -1167,13 +1183,31 @@
 
   function makeCoinMesh() {
     var g = new THREE.Group();
+    var st = COIN_STYLES[coinStyle] || COIN_STYLES[0];
     var body = new THREE.Mesh(coinGeo, COIN_MAT);
     body.castShadow = body.receiveShadow = true;
     g.add(body);
+    var top = COIN_R * st.thick / 2;
     var rim = new THREE.Mesh(new THREE.TorusGeometry(COIN_R * 0.92, COIN_R * 0.10, 5, 14), COIN_EDGE);
     rim.rotation.x = Math.PI / 2;
-    rim.position.y = COIN_R * 0.44;
+    rim.position.y = top;
     g.add(rim);
+    // The face is what the camera actually sees: a coin pile is read top-down,
+    // so the ring pattern on the face matters more than the edge does. Every
+    // style keeps its rings below the rim so a stacked coin never z-fights.
+    for (var ri = 0; ri < st.rings; ri++) {
+      var r = COIN_R * (0.66 - ri * 0.26);
+      var ring = new THREE.Mesh(new THREE.TorusGeometry(r, COIN_R * 0.035, 4, 16), COIN_EDGE);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = top + 0.0004 * (ri + 1);
+      g.add(ring);
+    }
+    // a raised centre disc so a stack of coins catches the light in layers
+    var disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(COIN_R * (st.rings ? 0.22 : 0.34), COIN_R * (st.rings ? 0.22 : 0.34),
+        COIN_R * 0.05, 12), COIN_EDGE);
+    disc.position.y = top + COIN_R * 0.02;
+    g.add(disc);
     return g;
   }
 
@@ -1743,7 +1777,7 @@ R.room = function () { return roomGroup; };
     return glowTex;
   }
 
-  function addGlow(x, z, big) {
+  function addGlow(x, z, big, spill) {
     var MAXG = 14;
     var idx = -1;
     for (var i = 0; i < glowState.length; i++) {
@@ -1778,8 +1812,12 @@ R.room = function () { return roomGroup; };
     g.size = big ? 0.46 : 0.17;
     mesh.position.set(x, floorY + 0.003 + (idx % 3) * 0.0004, z);
     mesh.rotation.z = (idx * 1.7) % 6.283;   // no two pools alike
-    mesh.material.color.setHex(big ? 0xffd79a : 0xffb867);
-    mesh.material.opacity = big ? 0.95 : 0.6;
+    // A spill is not a win: it gets a cold steel-blue pool so a coin that got
+    // away never looks like a coin that paid. The shape is the same, the colour
+    // is the whole message.
+    mesh.material.color.setHex(spill ? 0x7fa8c8 : big ? 0xffd79a : 0xffb867);
+    mesh.material.opacity = spill ? 0.5 : big ? 0.95 : 0.6;
+    g.base = spill ? 0.5 : big ? 0.95 : 0.6;
     mesh.scale.setScalar(g.size);
     mesh.visible = true;
   }
@@ -1794,7 +1832,7 @@ R.room = function () { return roomGroup; };
       var k = g.t / g.dur;                 // 1 -> 0
       // grow a touch while it fades: light spreading on the tiles
       m.scale.setScalar(g.size * (1 + (1 - k) * 0.5));
-      m.material.opacity = (g.size > 0.3 ? 0.95 : 0.6) * k * k;
+      m.material.opacity = (g.base || 0.6) * k * k;
     }
   }
 
@@ -1925,9 +1963,11 @@ R.room = function () { return roomGroup; };
           fm2.coin.position.set(fc.fx, fc.fy + 0.007 + Math.abs(jitter), fc.fz);
           fm2.coin.rotation.set(fc.fax * 0.4, fc.faz * 0.2, fc.faz * 0.3);
         }
-        // fade the tail of a landed coin's dwell so it does not pop out
+        // fade the tail of a landed coin's dwell so it does not pop out. A
+        // spilled coin lives nearly twice as long (the sim owns that number),
+        // so the fade has to be read from the coin rather than assumed.
         var age = fc.age || 0;
-        var dwell = G.Sim.TRAY_DWELL || 0.9;
+        var dwell = (G.Sim.TRAY_DWELL || 0.9) * (fc.spill ? 1.9 : 1);
         var fade = G.Sim.TRAY_FADE || 0.5;
         var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
@@ -1939,7 +1979,7 @@ R.room = function () { return roomGroup; };
         // game's biggest beat and gets the big, slow, bright version.
         if (onFloor && !landSeen.has(fc.id)) {
           landSeen.add(fc.id);
-          addGlow(fc.fx, fc.fz, fc.kind === 'prop');
+          addGlow(fc.fx, fc.fz, fc.kind === 'prop', !!fc.spill);
         }
       } else {
         fm2.coin.visible = false;
@@ -2119,14 +2159,51 @@ R.room = function () { return roomGroup; };
     return url;
   };
 
-  R.setCabinet = function (palette) {
+  // Two stages per coin design: 1972+1980 brass, 1997+2003 cupro-nickel,
+  // 2010+2020 steel, 2026 bimetal. Changing the coin is the cheapest way to
+  // make a decade feel like a decade, because the coin is the only object on
+  // screen that is drawn hundreds of times.
+  R.setCoinStyle = function (stageIdx) {
+    var next = Math.min(COIN_STYLES.length - 1, Math.max(0, Math.floor((stageIdx || 0) / 2)));
+    var st = COIN_STYLES[next];
+    coinStyle = next;
+    COIN_MAT.color.setHex(st.body);
+    COIN_MAT.roughness = st.rough;
+    COIN_MAT.metalness = st.metal;
+    COIN_MAT.needsUpdate = true;
+    COIN_EDGE.color.setHex(st.edge);
+    COIN_EDGE.needsUpdate = true;
+
+    // The silhouette changes with the thickness, so the shared geometry and
+    // every mesh built from it have to go. Rebuilding is cheap: the pool is at
+    // most a few hundred cylinders and it happens once per era change.
+    var oldGeo = coinGeo;
+    coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, COIN_R * st.thick, 16);
+    if (oldGeo) oldGeo.dispose();
+    coinMeshes.forEach(function (m) { scene.remove(m); });
+    coinMeshes.length = 0;
+    fallMeshes.forEach(function (fm) {
+      scene.remove(fm.coin);
+      if (fm.prop) scene.remove(fm.prop);
+    });
+    fallMeshes.length = 0;
+    propMeshes.forEach(function (pm) { scene.remove(pm); });
+    propMeshes.clear();
+    landSeen.clear();
+    return { index: next, body: st.body, edge: st.edge, thick: st.thick, rings: st.rings };
+  };
+
+  R.coinStyle = function () {
+    return { index: coinStyle, name: (COIN_STYLES[coinStyle] || {}).body };
+  };
+
+  R.setCabinet = function (palette, stageIdx) {
     if (!palette) return;
     scene.remove(cabinetGroup);
     cabinetGroup.traverse(function (o) { if (o.geometry) o.geometry.dispose(); });
     cabinetGroup = buildCabinet(palette.shell, palette.trim);
     scene.add(cabinetGroup);
-    // retint the tray glow
-    var accents = [0xd9a441, 0xff6b5e, 0x4ecdc4, 0x9bb8ff, 0x7ee787, 0xffd166, 0x5eb9ff];
+    if (stageIdx != null) R.setCoinStyle(stageIdx);
     // re-run the fit instead of writing a fixed eye: the old constant here
     // silently undid every aspect-aware framing the moment a stage loaded
     fitCamera(camera.aspect);

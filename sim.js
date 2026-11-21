@@ -470,8 +470,12 @@
           if (c.x - c.r < t.x0) { c.x = t.x0 + c.r; c.vx = Math.abs(c.vx) * 0.35; }
           if (c.x + c.r > t.x1) { c.x = t.x1 - c.r; c.vx = -Math.abs(c.vx) * 0.35; }
         } else if (c.x - c.r * 0.5 < t.x0 || c.x + c.r * 0.5 > t.x1) {
-          if (c.kind === 'prop') { c.x = clamp(c.x, t.x0 + c.r, t.x1 - c.r); }
-          else { this._scrap(c); }
+          // Everything spills here, prizes included. A prop used to be clamped
+          // back onto the felt, which meant a prize could never be lost -- and
+          // also meant a prize shoved into the corner sat there for ever with
+          // the player unable to reach it. Now it falls like everything else and
+          // main.js re-queues it, so a lost prize always comes back.
+          this._scrap(c);
         }
       }
     },
@@ -483,9 +487,30 @@
       if (i < 0) return;
       this.coins.splice(i, 1);
       c.fx = c.x; c.fz = c.z; c.fy = this._baseY(c) + c.l * 0.0132;
-      c.fvx = c.vx * 1.4; c.fvz = c.vz * 0.6; c.fvy = 0.02;
+      // A coin going over the side used to drop almost straight down and stop
+      // at the machine's own footprint, where the cabinet hid it. Push it OUT
+      // instead: the side rail is the only place coins leave the table, so the
+      // arc is the player's whole read on "that one was mine and it got away".
+      // Where it lands matters more than how hard it was hit. A coin that
+      // leaves the side rail at z~0.20 falls into the gap BESIDE the tray,
+      // which the fitted camera projects to ndc.x -1.2: off screen, behind the
+      // cabinet. Measured across all four viewports, the lit floor band the
+      // player can actually see is |x| 0.40-0.65, z 0.34-0.58. A 0.44 m drop
+      // at GRAV takes ~0.49 s, so the arc is aimed at that band: forward about
+      // 0.25 m, sideways only enough to drift inside 0.55.
+      var away = c.x < 0 ? -1 : 1;
+      var dx = (away * 0.55 - c.x);
+      // Scatter the landing, or a rail that sheds four coins sheds one clump:
+      // in the browser probe six spilt coins landed inside a 3 mm column and
+      // read as a single object.
+      c.fvx = clamp(dx / 0.49, -0.34, 0.34) + c.vx * 0.25 + (this.rng() - 0.5) * 0.26;
+      c.fvz = 0.50 + Math.max(c.vz, 0) * 0.16 + (this.rng() - 0.5) * 0.20;
+      c.fvy = 0.10;
       c.fax = (this.rng() - 0.5) * 9; c.faz = (this.rng() - 0.5) * 9;
       c.age = 0; c.state = 'lost';
+      // `spill` is what the renderer tones the landing pool with: a coin that
+      // got away must not light up the floor the same gold as a coin that paid.
+      c.spill = true;
       this.fall.push(c);
       this.stats.lost++;
       if (this.onLost) this.onLost(c);
@@ -516,6 +541,7 @@
         this.fall.push(c);
 
         if (!paid) {
+          c.spill = true;
           this.stats.lost++;
           if (this.onLost) this.onLost(c);
         } else if (c.kind === 'prop') {
@@ -563,7 +589,11 @@
           c.fvx *= 0.82; c.fvz *= 0.82;
           c.fax *= 0.86;
         }
-        if (c.age > TRAY_DWELL) this.fall.splice(i, 1);
+        // A spilled coin stays on the floor visibly longer than a paid one.
+        // The paid coin is a reward the HUD already announced; the spilled one
+        // is information, and information needs time to be read.
+        var dwell = c.spill ? TRAY_DWELL * 1.9 : TRAY_DWELL;
+        if (c.age > dwell) this.fall.splice(i, 1);
       }
     },
 

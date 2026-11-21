@@ -75,16 +75,26 @@ async function session(W, H, opts = {}) {
 }
 
 async function main() {
-  // ── defect 3: the three buttons must be the same width ─────────────────
+  // ── the bar is two tappable buttons that fit, settings is not on it ─
   for (const [w, h] of [[1280, 800], [390, 844], [844, 390], [320, 568]]) {
     const s = await session(w, h);
     const r = await s.evJ(`
-      var ids = ['museumBtn','settingsBtn','slapBtn'];
-      var ws = ids.map(function(id){ return +document.getElementById(id).getBoundingClientRect().width.toFixed(1); });
-      var hs = ids.map(function(id){ return +document.getElementById(id).getBoundingClientRect().height.toFixed(1); });
-      return JSON.stringify({ w: ws, h: hs, spread: +(Math.max.apply(null, ws) - Math.min.apply(null, ws)).toFixed(1) });
+      var ids = ['museumBtn','slapBtn'];
+      var bs = ids.map(function(id){ return document.getElementById(id).getBoundingClientRect(); });
+      var row = document.querySelector('.btnRow').getBoundingClientRect();
+      return JSON.stringify({
+        w: bs.map(function(b){ return +b.width.toFixed(1); }),
+        h: bs.map(function(b){ return +b.height.toFixed(1); }),
+        rowW: +row.width.toFixed(1),
+        spill: +(row.right - window.innerWidth).toFixed(1),
+        settingsOnBar: !!document.getElementById('settingsBtn'),
+        count: document.querySelectorAll('.btnRow .btn').length
+      });
     `);
-    check(`buttons equal width @${w}x${h}`, r.spread <= 1.0, r);
+    check(`bar is exactly two buttons @${w}x${h}`, r.count === 2 && r.settingsOnBar === false, r);
+    check(`both buttons are tappable @${w}x${h}`,
+      Math.min.apply(null, r.w) >= 44 && Math.min.apply(null, r.h) >= 40, r);
+    check(`bar stays inside the viewport @${w}x${h}`, r.spill <= 0.5, r);
     await s.close();
   }
 
@@ -123,7 +133,9 @@ async function main() {
       afterReload.muted === true && afterReload.label === '關' && afterReload.aria === 'false', afterReload);
 
     // now reset with sound still off, and prove the reset left the setting alone
-    await s.ev(`document.getElementById('settingsBtn').click(); return 1`);
+    await s.ev(`document.getElementById('museumBtn').click(); return 1`);
+    await sleep(300);
+    await s.ev(`document.getElementById('museumSettings').click(); return 1`);
     await sleep(300);
     await s.ev(`document.getElementById('settingsReset').click(); return 1`);
     await sleep(150);
@@ -195,8 +207,7 @@ async function main() {
       var p = JSON.parse(window.__probe());
       return JSON.stringify({
         wallet: p.wallet, seen: window.__seen, stats: p.stats,
-        topPile: document.getElementById('topPile').textContent,
-        topPileHidden: document.getElementById('topPile').hidden
+        onPlate: p.onPlate, plateZ: p.plate
       });
     `);
     check('payout moves the wallet down then back up', after.wallet !== before.wallet, { before, after });
@@ -204,7 +215,7 @@ async function main() {
     check('coin value ticks on payout', after.seen.tick > 0, after.seen);
     check('landing pool appears on the floor', after.seen.glow > 0, after.seen);
     check('a payout streak is counted', after.seen.combo >= 2, after.seen);
-    check('upper-deck counter is live', after.topPileHidden === false && /\d/.test(after.topPile), after);
+    check('coins ride the bar', after.onPlate > 0 && isFinite(after.plateZ), after);
 
     // ── the big beat: a prop falls out and the game says so ────────────
     // Measured: the first bigPayout lands around 54 game-seconds of steady
@@ -245,23 +256,33 @@ async function main() {
       check('the prop is collected', (bigSeen.collected | 0) >= 1, { collected: bigSeen.collected });
     }
 
-    // ── the marker colours follow the aim ──────────────────────────────
-    await s.ev(`window.__bot.dropAt(0.50); return 1`);
+    // ── the table carries no aim furniture ──────────────────────────
+    // This is a touch monitor: the coin leaves the chute the moment the finger
+    // lifts, so a ribbon, a landing ring and two red gutter strips were all
+    // predicting a decision the player had already made. Assert they stay gone.
+    await s.ev(`window.__bot.dropAt(0.35); return 1`);
     await sleep(350);
-    const gutterState = await s.evJ(`
+    const noAim = await s.evJ(`
       var p = JSON.parse(window.__probe());
-      return JSON.stringify({ inSlot: p.input.inSlot, aimX: p.input.aimX, head: p.aim });
+      var marked = [];
+      R.scene.traverse(function (o) {
+        if (o.userData && (o.userData.head || o.userData.gutters)) {
+          marked.push(o.type + ':' + (o.userData.head ? 'head' : 'gutters'));
+        }
+      });
+      return JSON.stringify({
+        hasRibbon: !!(window.app && app.aimRibbon),
+        marked: marked,
+        probeAim: p.aim,
+        stillAims: typeof p.input.aimX === 'number',
+        inSlot: p.input.inSlot
+      });
     `);
-    check('aim marker reports gutter outside the slot', gutterState.inSlot === false, gutterState);
-    check('marker is red over the gutter', /^#c8342b$/i.test(gutterState.head || ''), gutterState);
-    await s.ev(`window.__bot.dropAt(0); return 1`);
-    await sleep(350);
-    const inSlot = await s.evJ(`
-      var p = JSON.parse(window.__probe());
-      return JSON.stringify({ inSlot: p.input.inSlot, head: p.aim });
-    `);
-    check('aim marker reports slot at centre', inSlot.inSlot === true, inSlot);
-    check('marker is gold in the slot', /^#ffd28a$/i.test(inSlot.head || ''), inSlot);
+    check('no aim ribbon was rebuilt', noAim.hasRibbon === false, noAim);
+    check('the scene carries no landing ring or gutter strips', noAim.marked.length === 0, noAim);
+    check('the probe no longer reports a marker colour', noAim.probeAim === undefined, noAim);
+    check('aiming itself still works', noAim.stillAims === true, noAim);
+    check('the slot still reports inside/outside', noAim.inSlot === false, noAim);
 
     // ── the landing glow must exist on the floor ────────────────────────
     const glow = await s.evJ(`
