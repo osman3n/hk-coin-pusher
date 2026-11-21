@@ -270,7 +270,11 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .ovHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex:0 0 auto;gap:10px}
 .ovTitle{font-size:12px;letter-spacing:.22em;color:var(--dim)}
 .ovBody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
-  touch-action:pan-y;min-height:0}
+  touch-action:pan-y;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(217,164,65,.32) transparent}
+.ovBody::-webkit-scrollbar{width:8px}
+.ovBody::-webkit-scrollbar-track{background:transparent}
+.ovBody::-webkit-scrollbar-thumb{background:rgba(217,164,65,.26);border-radius:999px}
+.ovBody::-webkit-scrollbar-thumb:hover{background:rgba(217,164,65,.44)}
 
 .ovHead .btn{padding:8px 11px;min-height:40px;font-size:11px}
 
@@ -331,6 +335,7 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 /* Nine per decade, so the case is built as 3x3. auto-fill gave eight per row on
    a desktop and four on a phone, which stranded the ninth prop alone on a line
    every single time -- the one thing a fixed set of nine should never do. */
+:root{--muArt:clamp(58px,13vw,96px)}
 #museumGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
   max-width:560px;margin:0 auto;padding-bottom:8px}
 .mu{font:inherit;color:inherit;display:block;width:100%;border:1px solid var(--line);
@@ -342,14 +347,18 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
 .mu.got:active{transform:scale(.97)}
 .mu:focus-visible{outline:2px solid var(--gold);outline-offset:2px;opacity:1;filter:none}
 .mu.locked{cursor:default}
-.mu img{width:100%;aspect-ratio:1;object-fit:contain;display:block}
+/* The art box is capped rather than square-to-the-cell. At 560px wide the
+   three columns gave 180px squares, so one decade stood 600px tall and filled
+   the whole desktop viewport -- nine small objects read as a wall of emptiness.
+   Capped, a decade is a shelf you can see at a glance. */
+.mu img{width:100%;aspect-ratio:1;max-height:var(--muArt);object-fit:contain;display:block}
 .mu .n{font-size:10px;margin-top:6px;line-height:1.3;color:var(--dim)}
 .mu.got .n{color:var(--ink)}
 .mu .b{font-size:9px;color:var(--gold);margin-top:2px;letter-spacing:.1em}
 .mu.locked .n{display:none}
 .mu.locked{opacity:.16}
-.mu.locked .lockMark{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
-  font-size:20px;color:#463f36;border:1px dashed rgba(242,230,208,.10);border-radius:6px}
+.mu.locked .lockMark{width:100%;height:var(--muArt);display:flex;align-items:center;justify-content:center;
+  font-size:18px;color:#463f36;border:1px dashed rgba(242,230,208,.10);border-radius:6px}
 
 /* museum detail: a collected prop, read up close */
 #museumDetail{padding-bottom:24px;outline:none}
@@ -586,7 +595,7 @@ body.at-start #hud{opacity:0;pointer-events:none;transition:opacity .45s}
   #cardClose{min-height:48px}
   .ov{padding:max(14px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
   .ovTitle{font-size:11px;letter-spacing:.2em}
-  #museumGrid{gap:7px;max-width:420px}
+  #museumGrid{gap:7px;max-width:420px;--muArt:clamp(52px,17vw,82px)}
   .mu{padding:6px}
   .mu .n{font-size:9px}
   .mu .b{font-size:8px}
