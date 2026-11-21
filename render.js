@@ -1178,6 +1178,10 @@
   // ── scene ──────────────────────────────────────────────────────────────
   var scene, renderer, camera, cabinetGroup, trayGroup;
   var tableMeshes = {}, plateMeshes = {};
+  // The collection box, so a test can find it and so a landed coin knows there
+  // is something under it other than the room floor.
+  var boxGroup = null;
+  R.box = function () { return boxGroup; };
   // The payout mouth, captured when the lip is built so a paid coin can make
   // the only place that counts flash.
   var mouthSill = null, mouthMarks = [], mouthLamp = null, mouthAt = null;
@@ -1456,6 +1460,8 @@ R.init = function (canvas) {
     buildRoom();
     trayGroup = buildTray();
     scene.add(trayGroup);
+    boxGroup = buildBox();
+    if (boxGroup) scene.add(boxGroup);
 
     cabinetGroup = buildCabinet(0x6b4a2f, 0x2a1d12);
     scene.add(cabinetGroup);
@@ -1501,6 +1507,18 @@ R.init = function (canvas) {
   var camDir = new THREE.Vector3(0, 0.5655, 0.8249);
   var framing = { dist: 1.6976, aspect: 1, pitch: 0.6, portrait: false };
 
+  // How much of the viewport the bottom HUD panel covers, in CSS pixels. The
+  // payout lands at the front-bottom of the machine, which is precisely where
+  // the chips row and the buttons sit, so "does the game fit" is not a
+  // symmetric question: the safe band has to be shorter at the bottom than at
+  // the top, and only the caller knows how tall the HUD currently is.
+  var hudBottomPx = 0;
+  var hudViewH = 0;
+  R.setHudInset = function (px, viewH) {
+    hudBottomPx = Math.max(0, px || 0);
+    hudViewH = Math.max(1, viewH || 0);
+  };
+
   // ── camera shake ───────────────────────────────────────────────────────
   // The slap is a physical hit and the machine should take it too. The offset
   // is applied in R.render and removed again on the next frame, so nothing in
@@ -1541,6 +1559,17 @@ R.init = function (canvas) {
     var safeX = 0.94;
     var safeY = portrait ? 0.70 : 0.82;
 
+    // The bottom of the frame is not available: the HUD sits on it. Convert its
+    // pixel height into an NDC limit and use that as the downward band, so a
+    // point below the target is fitted into what is actually visible instead of
+    // into the whole viewport and then disappearing behind the chips row.
+    var safeDown = safeY;
+    if (hudBottomPx > 0 && hudViewH > 1) {
+      var ndcBottom = 1 - 2 * (hudBottomPx / hudViewH);
+      // a little clearance so a coin resting on the tray is not clipped by it
+      safeDown = Math.max(0.18, Math.min(safeY, Math.abs(ndcBottom) - 0.06));
+    }
+
     camDir.set(0, Math.sin(pitch), Math.cos(pitch)).normalize();
     var tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
     var tanH = tanV * aspect;
@@ -1550,18 +1579,33 @@ R.init = function (canvas) {
     var right = new THREE.Vector3().crossVectors(view, new THREE.Vector3(0, 1, 0)).normalize();
     var up = new THREE.Vector3().crossVectors(right, view).normalize();
 
+    var pts = FIT_POINTS;
+    var B = G.Sim && G.Sim.BOX;
+    if (B) {
+      // The catch tray is the lowest and nearest object on screen, and it is
+      // where the player looks after every win, so it has to be inside the
+      // guarantee like everything else. Read from the sim so moving the tray
+      // cannot silently move it out of frame again.
+      pts = FIT_POINTS.concat([
+        [B.x0, B.y + B.wall, B.z1], [B.x1, B.y + B.wall, B.z1],
+        [B.x0, B.y, B.z1], [B.x1, B.y, B.z1]
+      ]);
+    }
+
     var d = 1.0;
-    for (var i = 0; i < FIT_POINTS.length; i++) {
-      var fp = FIT_POINTS[i];
+    for (var i = 0; i < pts.length; i++) {
+      var fp = pts[i];
       // a point may claim more than the base safe band (see FIT_POINTS)
       var band = fp.length > 3 ? fp[3] : 1;
       var a = new THREE.Vector3(fp[0], fp[1], fp[2]).sub(CAM_TARGET);
       var depth0 = a.dot(view);       // depth at zero distance
       var xc = Math.abs(a.dot(right));
-      var yc = Math.abs(a.dot(up));
+      // above the target uses the full band, below uses the HUD-clipped one
+      var yUp = a.dot(up), yc = Math.abs(yUp);
+      var yBand = (yUp < 0 ? safeDown : safeY) * band;
       d = Math.max(d,
         xc / (tanH * safeX * band) - depth0,
-        yc / (tanV * safeY * band) - depth0);
+        yc / (tanV * yBand) - depth0);
     }
     d = Math.max(1.25, Math.min(6.0, d));
 
@@ -1628,16 +1672,35 @@ R.room = function () { return roomGroup; };
       cheek.position.set(side * (slotHalf + cheekW / 2), y + lipThick / 2, T.lip + 0.008);
       cheek.castShadow = true;
       g.add(cheek);
-      // and beyond it, a dark empty gap where the coin simply leaves
+      // The cheek's outer face, in brass, so the thing the coin bounces off has
+      // a visible thickness. Without it the cheek is a stripe on the felt and a
+      // coin that stops dead against it looks like it hit nothing.
+      g.add(box(0.006, lipThick + 0.004, lipThick + 0.006, lipMat,
+        side * (slotHalf + cheekW) + side * 0.003, y + lipThick / 2, T.lip + 0.008));
+
+      // and beyond it, the drain: an OPENING, cut down through the lip line and
+      // lined on three sides. It used to be a 2 mm dark plane a hair below the
+      // felt, which at the fitted pitch reads as a coin passing THROUGH the
+      // brass -- no edge, no thickness, no drop.
       var gapW = outerLip - (slotHalf + cheekW);
       if (gapW > 0.004) {
-        g.add(box(gapW, 0.002, lipThick, M(0x070503, 0.99), side * (slotHalf + cheekW + gapW / 2),
-          y - 0.004, T.lip + 0.008));
+        var gx = side * (slotHalf + cheekW + gapW / 2);
+        // the pocket floor, well below the felt: this is what the coin drops into
+        g.add(box(gapW, 0.004, lipThick, M(0x050402, 0.99), gx, y - 0.026, T.lip + 0.008));
+        // ...and its two dark sides, so the opening has depth rather than being
+        // a flat swatch of black
+        [-1, 1].forEach(function (e) {
+          g.add(box(0.004, 0.028, lipThick, M(0x0a0705, 0.99),
+            gx + e * (gapW / 2 - 0.002), y - 0.013, T.lip + 0.008));
+        });
+        g.add(box(gapW, 0.028, 0.004, M(0x0a0705, 0.99), gx, y - 0.013, T.lip - 0.001));
       }
-      // a low brown wall closing the corner so the gap reads as a drop, not a
-      // missing piece
-      var post = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.030, lipThick), M(0x2b1d12, 0.85));
-      post.position.set(side * outerLip, y + 0.014, T.lip + 0.008);
+
+      // a low brown kerb at the outer end, BEYOND the pocket: the drain is an
+      // opening in the machine's front edge, not the machine simply ending.
+      var post = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.038, lipThick + 0.004),
+        M(0x2b1d12, 0.85));
+      post.position.set(side * (outerLip + 0.006), y + 0.018, T.lip + 0.008);
       g.add(post);
       // remember where the drop really is, so a coin that falls there can be
       // pointed at with a label instead of silently disappearing
@@ -1650,8 +1713,10 @@ R.room = function () { return roomGroup; };
     // glows.
     g.add(box(slotHalf * 2, 0.004, 0.055, M(0x0a0704, 0.98), 0, y - 0.004, T.lip + 0.030));
     var sill = new THREE.Mesh(new THREE.BoxGeometry(slotHalf * 2 + 0.014, 0.006, 0.014),
-      new THREE.MeshStandardMaterial({ color: 0xf0c869, roughness: 0.30, metalness: 0.85,
-        emissive: 0xd9a441, emissiveIntensity: 0.55 }));
+      // Rough gold, not polished: a mirror-smooth sill at grazing angle catches
+      // the mouth lamp and reads as a lit bar with no shape.
+      new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.52, metalness: 0.62,
+        emissive: 0xd9a441, emissiveIntensity: 0.20 }));
     sill.position.set(0, y + lipThick + 0.002, T.lip + 0.010);
     g.add(sill);
     mouthSill = sill;
@@ -1660,14 +1725,17 @@ R.room = function () { return roomGroup; };
     [-1, 1].forEach(function (side) {
       var mark = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.032, 0.008),
         new THREE.MeshStandardMaterial({ color: 0xffe6a8, roughness: 0.35, metalness: 0.7,
-          emissive: 0xd9a441, emissiveIntensity: 0.7 }));
+          emissive: 0xd9a441, emissiveIntensity: 0.26 }));
       mark.position.set(side * slotHalf, y + lipThick + 0.016, T.lip + 0.008);
       g.add(mark);
       mouthMarks.push(mark);
     });
     // a soft gold light in the throat: the machine is brighter where it pays
-    var mouthLight = new THREE.PointLight(0xffc266, 0.5, 0.34, 2);
-    mouthLight.position.set(0, y - 0.035, T.lip + 0.055);
+    // The mouth lamp lights the slot, not the tray 90 mm below it: a short range
+    // keeps its spill off the tray floor, which would otherwise read as a white
+    // plate and hide the coins that just landed in it.
+    var mouthLight = new THREE.PointLight(0xffc266, 0.16, 0.17, 2);
+    mouthLight.position.set(0, y - 0.030, T.lip + 0.030);
     g.add(mouthLight);
     mouthLamp = mouthLight;
     mouthAt = { x: 0, y: y + lipThick, z: T.lip };
@@ -1707,6 +1775,62 @@ R.room = function () { return roomGroup; };
     return g;
   }
 
+
+  // The collection box: a shallow brass tray sitting on the room floor under
+  // the machine, where counted coins land. It is a separate object from the
+  // payout mouth on purpose. The mouth is where the machine decides; the box is
+  // where the player sees the decision pile up. Two different questions, two
+  // different things on screen -- for a while both answers lived in one HUD
+  // number and the player could not tell which part of the machine counted.
+  function buildBox() {
+    var B = G.Sim.BOX;
+    if (!B) return null;
+    var g = new THREE.Group();
+    var cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
+    var w = B.x1 - B.x0, d = B.z1 - B.z0;
+
+    var wallMat = M(0x6b4a22, 0.62, 0.35);
+    var floorMat = M(0x1a120a, 0.98);
+    var brass = M(0xd9a441, 0.34, 0.62);
+
+    // interior floor: a dark felt well, so gold coins read against it
+    g.add(box(w - 0.012, 0.008, d - 0.012, floorMat, cx, B.y - 0.004, cz));
+
+    // Low front wall only. A tray with four waist-high walls reads as a crate
+    // you cannot see into on a phone; the front lip is what holds the coins and
+    // the sides are what makes it a tray, so they stay, but the back wall is the
+    // machine's own face and does not need to be modelled twice.
+    var t = 0.012;
+    g.add(box(w, B.wall * 0.55, t, wallMat, cx, B.y + B.wall * 0.275, B.z1 - t / 2));
+    g.add(box(t, B.wall * 0.8, d - t, wallMat, B.x0 + t / 2, B.y + B.wall * 0.4, cz));
+    g.add(box(t, B.wall * 0.8, d - t, wallMat, B.x1 - t / 2, B.y + B.wall * 0.4, cz));
+
+    // brass lip along the front, matching the mouth: the paid side wears brass
+    g.add(box(w + 0.008, 0.006, 0.009, brass, cx, B.y + B.wall * 0.55, B.z1 - t / 2));
+    g.add(box(0.008, 0.006, d + 0.006, brass, B.x0 + t / 2, B.y + B.wall * 0.8, cz));
+    g.add(box(0.008, 0.006, d + 0.006, brass, B.x1 - t / 2, B.y + B.wall * 0.8, cz));
+
+    // The shelf it rests on. Without this the tray floats in front of the
+    // cabinet; with it, it reads as part of the machine.
+    var shelfY = B.y - 0.006;
+    g.add(box(w + 0.05, 0.012, d + 0.02, M(0x3a2817, 0.80), cx, shelfY, cz));
+    // two brackets down to the cabinet base
+    [-1, 1].forEach(function (sgn) {
+      g.add(box(0.016, 0.055, 0.016, M(0x2e2114, 0.85),
+        cx + sgn * (w / 2 - 0.02), shelfY - 0.034, B.z1 - 0.03));
+    });
+
+    // Warm light inside, so the pile is legible at a glance on a phone in
+    // daylight -- it is the "you got it" readout for the whole game.
+    // A tray lamp bright enough to read the pile also blows out the tray floor
+    // into a white plate -- and a white plate looks like nothing landed. Keep it
+    // low and put it behind the pile, so the coins are rimmed rather than washed.
+    var lamp = new THREE.PointLight(0xffbe66, 0.16, 0.42, 2);
+    lamp.position.set(cx, B.y + 0.055, cz + 0.055);
+    g.add(lamp);
+
+    return g;
+  }
 
   function buildTray() {
     var g = new THREE.Group();
@@ -1965,7 +2089,12 @@ R.room = function () { return roomGroup; };
         var floorY = (G.Sim.FLOOR_Y || -0.42);
         // "On the floor" is the sim's own landing test, so the pose and the
         // height switch on exactly the frame the sim says the fall is over.
-        var onFloor = fc.fy <= floorY + 0.002;
+        // A coin that went into the box stopped 80 mm above the tiles. Read
+        // that height from the coin, not from the floor: the whole point of the
+        // box is that a counted coin lands somewhere different, and drawing it
+        // at the room floor would put it inside the tray's floor.
+        var restY = (fc.landY != null) ? fc.landY : floorY;
+        var onFloor = fc.fy <= restY + 0.002;
         // A coin's half thickness is what has to clear the tiles once it lies
         // flat: CylinderGeometry(COIN_R, COIN_R, COIN_R * 0.42) -> COIN_R * 0.21.
         // Read the radius from sim rather than baking the number in here, so a
@@ -1982,7 +2111,7 @@ R.room = function () { return roomGroup; };
           // old code kept the tumble angles and a 6 mm lift, which pushed a
           // dropped prize through the tiles.
           if (onFloor) {
-            fm2.prop.position.set(fc.fx, floorY + 0.001 + rest, fc.fz);
+            fm2.prop.position.set(fc.fx, restY + 0.001 + rest, fc.fz);
             fm2.prop.rotation.set(0, fc.faz * 0.2, 0);
           } else {
             fm2.prop.position.set(fc.fx, fc.fy + 0.006, fc.fz);
@@ -2000,7 +2129,7 @@ R.room = function () { return roomGroup; };
           // cylinder's axis is +Y, so x and z at zero IS the face; only the spin
           // about Y survives the landing.
           fm2.coin.rotation.set(0, fc.faz * 0.35, 0);
-          fm2.coin.position.set(fc.fx, floorY + coinR * 0.21 + rest, fc.fz);
+          fm2.coin.position.set(fc.fx, restY + coinR * 0.21 + rest, fc.fz);
         } else {
           // Airborne: tumble the whole way down, untouched.
           var jitter = ((fc.id % 7) - 3) * 0.0009;
@@ -2011,7 +2140,9 @@ R.room = function () { return roomGroup; };
         // spilled coin lives nearly twice as long (the sim owns that number),
         // so the fade has to be read from the coin rather than assumed.
         var age = fc.age || 0;
-        var dwell = (G.Sim.TRAY_DWELL || 0.9) * (fc.spill ? 1.9 : 1);
+        var dwell = (G.Sim.TRAY_DWELL || 0.9);
+        if (fc.spill) dwell *= 1.9;
+        else if (fc.inBox) dwell *= 3.0;
         var fade = G.Sim.TRAY_FADE || 0.5;
         var o = age > dwell - fade ? Math.max(0, 1 - (age - (dwell - fade)) / fade) : 1;
         fm2.coin.visible = fc.kind === 'coin' && o > 0.02;
@@ -2122,15 +2253,15 @@ R.room = function () { return roomGroup; };
     mouthPeak = Math.max(lit, mouthPeak - dt * 2.6);
     var g = mouthPeak;
     if (mouthSill && mouthSill.material) {
-      mouthSill.material.emissiveIntensity = 0.55 + g * 1.9;
+      mouthSill.material.emissiveIntensity = 0.20 + g * 1.5;
       mouthSill.material.color.setHex(g > 0.5 ? 0xfff0c0 : 0xf0c869);
     }
     for (var i = 0; i < mouthMarks.length; i++) {
       if (mouthMarks[i].material) {
-        mouthMarks[i].material.emissiveIntensity = 0.7 + g * 1.6;
+        mouthMarks[i].material.emissiveIntensity = 0.26 + g * 1.5;
       }
     }
-    if (mouthLamp) mouthLamp.intensity = 0.5 + g * 1.5;
+    if (mouthLamp) mouthLamp.intensity = 0.16 + g * 1.3;
   }
 
   R.mouthAt = function () { return mouthAt; };

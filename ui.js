@@ -330,6 +330,7 @@
     $('renewOk').onclick = function () { UI.closeRenew(); };
     $('settingsClose').onclick = function () { UI.closeSettings(); };
     $('soundToggle').onclick = function () { UI.toggleMuted(); };
+    if ($('testToggle')) $('testToggle').onclick = function () { UI.onToggleTest(); };
     $('settingsReset').onclick = function () { armReset(); };
     els.settings.onclick = function (e) {
       if (e.target !== els.settings) return;
@@ -554,6 +555,10 @@
     if (!mouthTagN) mouthTagN = $('mouthTagN');
     return mouthTagN;
   }
+
+  // main.js replaces this with the real toggle. It is defaulted here so the
+  // switch cannot throw if the two files ever drift out of step.
+  UI.onToggleTest = function () { UI.setTestMode(!testModeOn); };
 
   UI.setMouthCount = function (n, stageIdx) {
     mouthTag.paid = n;
@@ -878,7 +883,11 @@
   // 1972 again. Now the year on the HUD opens the list of every shop.
   function paintEras() {
     var cur = state.stageIdx;
-    var top = Math.max(state.maxStage, cur);
+    // Test mode opens every shop, but only in memory: a save written while
+    // testing must never hand a real player decades they did not play. That is
+    // also why save writes are switched off entirely in test mode (see
+    // UI.setSaveEnabled), so this branch cannot leak into storage.
+    var top = testModeOn ? C.STAGES.length - 1 : Math.max(state.maxStage, cur);
     var now = C.STAGES[cur];
 
     // The header says what standing here costs and offers the one move the
@@ -983,6 +992,15 @@
 
   // main.js calls this whenever the machine moves, so the HUD, the save and
   // the list all agree on which decade is open.
+  // Writes are switched off while testing. A tester who jumps to 2026 should
+  // come back to their own progress after a reload, not to a run someone else
+  // made with the gates open -- and a test session that overwrote a real save
+  // would be unrecoverable.
+  var saveEnabled = true;
+
+  UI.setSaveEnabled = function (on) { saveEnabled = !!on; };
+  UI.saveEnabled = function () { return saveEnabled; };
+
   UI.setMaxStage = function (n) {
     state.maxStage = Math.max(state.maxStage || 0, num(n, 0));
   };
@@ -1056,6 +1074,26 @@
     b.setAttribute('aria-label', muted ? '音效：關' : '音效：開');
     txt(s, muted ? '關' : '開');
   }
+
+  // Test mode is a permission, not a setting: it is never written to the save,
+  // so reloading the page always comes back as the real game. The switch shows
+  // whatever main.js currently believes, because main.js owns the flag.
+  var testModeOn = false;
+
+  function paintTest() {
+    var b = $('testToggle'), s = $('testToggleState');
+    if (!b) return;
+    b.setAttribute('aria-checked', testModeOn ? 'true' : 'false');
+    b.setAttribute('aria-label', testModeOn ? '測試模式：開' : '測試模式：關');
+    txt(s, testModeOn ? '開' : '關');
+  }
+
+  UI.setTestMode = function (on) {
+    testModeOn = !!on;
+    paintTest();
+    return testModeOn;
+  };
+  UI.isTestMode = function () { return testModeOn; };
 
   // The sentence above the button has to be true, so it is read from live
   // state every time the page opens instead of being written once.
@@ -1134,6 +1172,7 @@
     state.settingsFromMuseum = els.museum.classList.contains('on');
     if (state.settingsFromMuseum) els.museum.classList.remove('on');
     paintSound();
+    paintTest();
     paintResetCopy();
     disarmReset();
     els.settings.classList.add('on');
@@ -1277,6 +1316,9 @@
   };
 
   UI.save = function () {
+    // No writes while testing. Everything else in the game keeps working; only
+    // the record is held back, so a test run cannot overwrite a real one.
+    if (!saveEnabled) return;
     try {
       localStorage.setItem('yatmangai.save.v1', JSON.stringify({
         v: 1, stageIdx: state.stageIdx, coins: state.coins, collected: state.collected,
@@ -1329,7 +1371,7 @@
 
   // Paint the restored setting before anybody can open the page. boot() calls
   // this right after UI.load(), so a silent save never shows 開 for a frame.
-  UI.paintSettings = function () { paintSound(); };
+  UI.paintSettings = function () { paintSound(); paintTest(); };
 
   G.UI = UI;
 })(window);

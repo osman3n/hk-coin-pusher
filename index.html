@@ -99,22 +99,25 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
    would be the only thing centring it, and the label would jump half its own
    width every time a coin is paid. Base rule and keyframe must agree. */
 #mouthTag{position:absolute;left:0;top:0;transform:translate(-50%,-50%);pointer-events:none;
-  display:flex;align-items:baseline;gap:5px;padding:3px 8px;border-radius:999px;
-  background:rgba(9,7,5,.82);border:1px solid var(--gold-a38);white-space:nowrap;
-  box-shadow:0 2px 10px rgba(0,0,0,.55)}
-#mouthTag .mtK{font-size:9px;letter-spacing:.10em;color:var(--gold);opacity:.92}
-#mouthTag .mtN{font-size:12px;font-weight:700;color:var(--gold-hi);font-variant-numeric:tabular-nums;
-  line-height:1}
-#mouthTag::before{content:"";position:absolute;left:50%;top:-4px;width:7px;height:7px;
-  margin-left:-3.5px;transform:rotate(45deg);background:rgba(9,7,5,.82);
-  border-left:1px solid var(--gold-a38);border-top:1px solid var(--gold-a38)}
+  display:flex;align-items:baseline;gap:4px;padding:2px 6px;border-radius:999px;
+  background:rgba(9,7,5,.72);white-space:nowrap}
+#mouthTag .mtK{font-size:8px;letter-spacing:.08em;color:var(--gold);opacity:.80}
+#mouthTag .mtN{font-size:10px;font-weight:700;color:var(--gold-hi);font-variant-numeric:tabular-nums;
+  line-height:1;opacity:.92}
+#mouthTag::before{content:"";position:absolute;left:50%;top:-3px;width:5px;height:5px;
+  margin-left:-2.5px;transform:rotate(45deg);background:rgba(9,7,5,.72)}
 /* Visibility is owned by [hidden] alone. An opacity keyframe is not used here:
    a throttled/backgrounded page can hold an animation at its 0% frame, and an
    opacity:0 first frame made the label invisible for its whole life. */
+/* The negated label is deliberately the quiet one. It used to be a fat red pill
+   with a border and a shadow -- bigger and louder than the gold tag it was
+   contradicting, so the one piece of good news on screen looked like the
+   warning. It is now a small red mark with no fill: enough to name the corner,
+   not enough to shout. */
 #noCount{position:absolute;left:0;top:0;transform:translate(-50%,-50%);pointer-events:none;
-  padding:2px 7px;border-radius:999px;font-size:9px;letter-spacing:.10em;
-  color:#ffd9d2;background:rgba(48,10,8,.86);border:1px solid rgba(200,52,43,.62);
-  white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.55)}
+  padding:0;border-radius:0;font-size:8px;letter-spacing:.08em;
+  color:rgba(232,138,128,.82);background:none;border:0;
+  white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,.9)}
 #noCount.hit{animation:noCountHit .34s ease-out}
 /* The fade-out belongs to the JS timer, not the animation: a keyframe that ends
    at opacity 0 makes the label invisible while it is still logically showing,
@@ -781,6 +784,20 @@ html,body{height:100%;background:var(--bg);overflow:hidden;color:var(--ink);
           <span id="soundToggleState">開</span>
         </button>
       </div>
+    </div>
+    <div class="setGroup">
+      <div class="setK">測試</div>
+      <div class="setRow">
+        <div class="setMain">
+          <div class="setName">測試模式</div>
+          <div class="setSub">年代任跳，硬幣唔會扣。用嚟睇後面的年代同試物理；關咗 tab 就自動熄。</div>
+        </div>
+        <button class="switch" id="testToggle" type="button" role="switch" aria-checked="false" aria-label="測試模式">
+          <span class="knob" aria-hidden="true"><i></i></span>
+          <span id="testToggleState">關</span>
+        </button>
+      </div>
+      <div class="setHint" id="testHint">亦可以直接開 <b>?test</b>。測試模式唔會寫入存檔。</div>
     </div>
     <div class="setGroup">
       <div class="setK">進度</div>

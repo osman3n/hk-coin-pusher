@@ -76,6 +76,35 @@
     plateDrop: 0.016
   };
   var DECKS = { main: DECK };
+
+  // The collection box. A counted coin used to land on the room floor in the
+  // same way an uncounted one did, one metre below the machine and half a
+  // second later, so "did that count?" was answered by a HUD number rising and
+  // nothing else. Now the two destinations are different objects: brass pays
+  // into the box, the dark corner spills onto the tiles. The box sits inside
+  // the floor band the fitted camera actually shows (measured |x| 0.40-0.80,
+  // z 0.34-0.58 for side spill; the box is centred, so it lands dead in shot on
+  // every viewport).
+  // The catch tray hangs off the machine's face, directly under the mouth.
+  // It used to sit on the room floor, which is physically reasonable and
+  // visually wrong: the bottom of the frame is where the HUD lives, so the tray
+  // -- the one place a player looks after every win -- was projected behind the
+  // chips row on four of five viewports. A mouth-hung tray is high enough to be
+  // visible everywhere and closer to where the coin actually leaves the machine.
+  // The front edge sits 10mm behind the lip. Anything that clears the lip has
+  // already been paid, so a coin landing between the two would be counted and
+  // then visibly dropped on the floor -- measured once at z 0.293 with the edge
+  // at 0.30. Overlapping the lip removes that gap entirely.
+  // Measured clearances (worst case over the five viewports, px above the HUD):
+  // floor tray -19, this tray -43.
+  var BOX = {
+    x0: -0.26, x1: 0.26,
+    z0: 0.27, z1: 0.46,
+    // interior floor, just below the felt so a coin visibly drops into it
+    y: -0.08,
+    // rim height above the interior floor
+    wall: 0.050
+  };
   // Compat aliases: older tools and the probe still ask for TOP / BOTTOM.
   var TOP = DECK, BOT = DECK;
   var TABLE = DECK.table, PLATE = DECK.plate;
@@ -573,6 +602,32 @@
 
         var paid = c.kind === 'prop' || Math.abs(c.x) <= this.payW;
         c.state = paid ? 'falling' : 'lost';
+
+        // A counted coin is not merely labelled as counted -- it is thrown into
+        // the box. Solving for the arrival point instead of nudging the arc is
+        // what makes that a promise rather than a hope: from the lip to the box
+        // floor is 0.36 m, which under GRAV with the 0.10 launch is 0.42 s, so
+        // the horizontal velocities that put the coin at the box centre are
+        // simply the offset over that time. If the arc were left to chance a
+        // paid coin would sometimes miss the tray and land on the floor beside
+        // it, and the player would see the machine count a coin that visibly
+        // did not go in.
+        if (paid) {
+          // Fall time for the mouth-hung tray: ~80 mm of drop under GRAV 3.6 is
+        // 0.21 s, and the tray mouth is 0.10 m past the lip. Solved rather than
+        // guessed, so a win lands in the tray instead of beside it.
+        var bt = 0.21;
+          var bx = c.kind === 'prop' ? 0 : (this.rng() - 0.5) * 0.30;
+          var bz = (BOX.z0 + BOX.z1) / 2 + (this.rng() - 0.5) * 0.07;
+          c.fvx = clamp((bx - c.x) / bt, -0.60, 0.60);
+          c.fvz = clamp((bz - c.z) / bt, -0.10, 0.90);
+        } else {
+          // A spilled coin still goes over the side and lands out on the tiles
+          // where the player can watch it go; _scrap owns that arc. Here it is
+          // only the mouth-outside case, which falls straight down the front.
+          c.fvx = clamp(c.vx, -0.60, 0.60);
+        }
+
         this.fall.push(c);
 
         if (!paid) {
@@ -618,16 +673,28 @@
         // and lost coins both ride the same arc all the way down to the room
         // floor, sit there for the dwell so the player sees where it went, then
         // are gone.
-        if (c.fy <= FLOOR_Y) {
-          c.fy = FLOOR_Y;
+        // Two destinations, decided by where the coin is: between the brass
+        // walls it lands on the box floor, anywhere else it lands on the room
+        // floor. `landY` is kept on the coin so the renderer settles it at the
+        // height it actually stopped at rather than assuming the tiles.
+        var inBox = c.state !== 'lost' &&
+          c.fx > BOX.x0 && c.fx < BOX.x1 && c.fz > BOX.z0 && c.fz < BOX.z1;
+        var landY = inBox ? BOX.y : FLOOR_Y;
+        if (c.fy <= landY) {
+          c.fy = landY;
+          c.landY = landY;
+          c.inBox = inBox;
           if (c.fvy < 0) c.fvy = 0;
           c.fvx *= 0.82; c.fvz *= 0.82;
           c.fax *= 0.86;
         }
-        // A spilled coin stays on the floor visibly longer than a paid one.
-        // The paid coin is a reward the HUD already announced; the spilled one
-        // is information, and information needs time to be read.
-        var dwell = c.spill ? TRAY_DWELL * 1.9 : TRAY_DWELL;
+        // Three dwells, because the three cases are saying different things.
+        // A spilled coin is information and needs time to be read. A coin in
+        // the box is the reward and has to be seen to join a pile, so it stays
+        // longest. Anything else is the tail of a fall and leaves quickly.
+        var dwell = TRAY_DWELL;
+        if (c.spill) dwell *= 1.9;
+        else if (inBox) dwell *= 3.0;
         if (c.age > dwell) this.fall.splice(i, 1);
       }
     },
@@ -681,6 +748,7 @@
   Sim.TRAY_DWELL = TRAY_DWELL; Sim.TRAY_FADE = TRAY_FADE;
   Sim.PAY_W = PAY_W; Sim.CHEEK_W = CHEEK_W; Sim.GRAV = GRAV;
   Sim.PLATE_DROP = PLATE_DROP; Sim.RIDE = RIDE;
+  Sim.BOX = BOX;
   Sim.makeRng = makeRng;
   Sim.clamp = clamp;
   G.Sim = Sim;

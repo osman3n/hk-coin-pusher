@@ -21,6 +21,14 @@
 
   var SELFTEST = /[?&]selftest\b/.test(location.search);
   var PROBE = /[?&]probe\b/.test(location.search);
+  // Test mode: any decade, endless coins, and the collection gate ignored.
+  // Opened by `?test` or from a row in 設定, and deliberately NOT saved -- a
+  // tester who closes the tab should not come back to a machine that still
+  // hands out free money. It changes what the game PERMITS, never what the
+  // physics or the payout rate does, so a run in test mode still measures the
+  // real machine.
+  var TEST_FLAG = /[?&]test\b/.test(location.search);
+  var testMode = TEST_FLAG;
 
   // ── input state ────────────────────────────────────────────────────────
   var aim = { x: 0, active: false, dragging: false };
@@ -83,10 +91,14 @@
     Sim.onLost = onLost;
     Sim.seedPile(56 + idx * 4);
     // coins are the wallet and survive an era change; only the table is rebuilt
+    // Test mode unlocks every decade and tops the wallet back up on every
+    // stage change, so a tester can jump straight to 2026 instead of playing
+    // seven decades to look at one table.
+    if (testMode) app.state.coins = Math.max(app.state.coins, START_COINS);
     UI.setCoins(app.state.coins);
     // Walking back to 1972 to re-shove a lost prize must not lock 1980 behind
     // it, so the furthest decade reached is its own number.
-    UI.setMaxStage(idx);
+    if (!testMode) UI.setMaxStage(idx);
     if (!keepSave) UI.say(st.open, 4200);
   }
 
@@ -291,7 +303,7 @@
     // always free. The list already greys out the rest, but the click reaches
     // here through a button, so the rule is checked again where it matters.
     var cur = app.state.stageIdx;
-    if (idx > cur && !UI.bigComplete(stage())) {
+    if (idx > cur && !testMode && !UI.bigComplete(stage())) {
       UI.say('收齊呢個年代三件大件，部機先會搬。', 3200);
       return;
     }
@@ -394,6 +406,23 @@
   }
   UI.onReset = function () { resetProgress(); };
 
+  // The switch in 設定 flips the same flag `?test` sets. Turning it off puts the
+  // ceiling back where the player actually earned it, otherwise a tester who
+  // switched on, jumped to 2026 and switched off would keep a decade they never
+  // played.
+  UI.onToggleTest = function () {
+    testMode = !testMode;
+    UI.setTestMode(testMode);
+    // Nothing is written while testing. The ceiling is lifted in the selector
+    // itself (see paintEras), so the save never learns about a decade that was
+    // only visited with the gates open.
+    UI.setSaveEnabled(!testMode);
+    if (testMode) app.state.coins = Math.max(app.state.coins, START_COINS);
+    UI.setCoins(app.state.coins);
+    UI.say(testMode ? '測試模式：年代任跳，硬幣唔會扣，進度唔會存。' : '測試模式閂咗，進度繼續存。', 3200);
+    return testMode;
+  };
+
   // ── loop ───────────────────────────────────────────────────────────────
   // ── 唔計 ───────────────────────────────────────────────────────────────
   // The drain is the only place a coin is lost, and it is physically two small
@@ -452,15 +481,6 @@
   var mouthVec = null;
   var mouthVecA = null;
   // Screen point a little in front of the mouth, i.e. the near edge of the lip.
-  function mouthVecAhead(at) {
-    if (!mouthVecA) mouthVecA = new G.THREE.Vector3();
-    mouthVecA.set(at.x, at.y, at.z + 0.09);
-    mouthVecA.project(app.camera);
-    return {
-      x: (mouthVecA.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-mouthVecA.y * 0.5 + 0.5) * window.innerHeight
-    };
-  }
   function placeMouthTag() {
     if (!UI.placeMouthTag) return;
     var at = R.mouthAt && R.mouthAt();
@@ -483,19 +503,54 @@
     // same band compresses to a handful of pixels and a fixed 26 px offset put
     // the tag squarely on the slot it was labelling. So project a point a short
     // way in front of the mouth and take the pixel gap as the drop.
-    var dy = (h < 520 || w < 420) ? 30 : 26;
-    if (mouthVec) {
-      var ahead = mouthVecAhead(at);
-      dy = Math.max(dy, Math.round((ahead.y - y) * 1.15 + 14));
+    // The tag has to sit BELOW the tray, not on it: the coins that just landed
+    // are the proof the counter is telling the truth, and a label parked on top
+    // of them hides the evidence. So anchor to the tray's own front-bottom edge
+    // (falling back to the mouth when there is no tray) and then clear it.
+    var B = Sim.BOX;
+    var anchorY = y, anchorX = x;
+    if (B) {
+      if (!mouthVec) mouthVec = new G.THREE.Vector3();
+      mouthVec.set(B.x0, B.y, B.z1);
+      mouthVec.project(app.camera);
+      var bx0 = (mouthVec.x * 0.5 + 0.5) * w;
+      var by0 = (-mouthVec.y * 0.5 + 0.5) * h;
+      anchorX = bx0 + (x - bx0);          // keep the tag under the mouth
+      anchorY = by0;
     }
+    var dy = (h < 520 || w < 420) ? 12 : 10;
     var show = !behind && !Sim.busy && app.state.started && x > -40 && x < w + 40;
-    UI.placeMouthTag(x, y + dy, show);
+    UI.placeMouthTag(anchorX, anchorY + dy, show);
 
     // keep the drain label pinned to its corner while it is up
     if (noCountEl && !noCountEl.hidden) {
       placeAtWorld(noCountEl, +noCountEl.dataset.wx, +noCountEl.dataset.wy,
         +noCountEl.dataset.wz, 22);
     }
+  }
+
+  // ── HUD inset ──────────────────────────────────────────────────────────
+  // The HUD is a DOM panel whose height nobody declares: it grows with the
+  // chips row and the slap meter. The payout lands at the front-bottom of the
+  // machine -- exactly what the HUD covers -- so the camera has to be told how
+  // much of the frame is spoken for, or it "fits" the tray into pixels that are
+  // not visible. This lives at module scope because frame() re-checks it every
+  // tick: the HUD grows *after* boot (the chips row fills in, the slap meter
+  // appears), and an inset measured once at boot is stale within a second.
+  var hudPx = -1;
+  function hudInset() {
+    var el = document.getElementById('bottom');
+    var h = Math.round(innerHeight);
+    if (!el) return { px: 0, h: h };
+    var r = el.getBoundingClientRect();
+    return { px: Math.max(0, Math.round(h - r.top)), h: h };
+  }
+  function syncHudInset() {
+    var inset = hudInset();
+    if (inset.px === hudPx) return false;
+    hudPx = inset.px;
+    if (R.setHudInset) R.setHudInset(inset.px, inset.h);
+    return true;
   }
 
   function frame(now) {
@@ -506,6 +561,8 @@
     if (!(rawDt > 0) || rawDt > 60) rawDt = 0.016;
     var dt = Math.min(0.05, rawDt);
     lastT = now;
+
+    if (syncHudInset()) R.resize(app.w, app.h);
 
     if (app.state.started) {
       acc += dt;
@@ -603,6 +660,7 @@
 
     canvas = document.getElementById('c');
     R.init(canvas);
+    syncHudInset();
     app.w = innerWidth; app.h = innerHeight;
     R.resize(app.w, app.h);
     app.camera = R.camera;          // getter exposed by render.js
@@ -613,6 +671,10 @@
     Sim.onBigPayout = onBigPayout;
 
     var loaded = UI.load();
+    // `?test` has to reach the save gate before the first write, and the switch
+    // in 設定 has to show the flag the URL just set.
+    if (testMode) UI.setSaveEnabled(false);
+    UI.setTestMode(testMode);
     // The mute flag came back with the save; paint the switch now so the page
     // never shows 開 for a frame over a save that says otherwise.
     if (UI.paintSettings) UI.paintSettings();
@@ -645,6 +707,7 @@
       if (v.w < 1 || v.h < 1) return;
       if (v.w === app.w && v.h === app.h) return;
       app.w = v.w; app.h = v.h;
+      syncHudInset();
       R.resize(app.w, app.h);
       app.camera = R.camera;
     }
@@ -740,7 +803,17 @@
       // than making them press again.
       if (gesture.dragged) { stopHold(); gesture.auto = false; return; }
       if (Sim.busy || !app.state.started) { stopHold(); gesture.auto = false; return; }
-      if (app.state.coins <= 0) { stopHold(); gesture.auto = false; return; }
+      if (testMode) {
+      // Not "coins are free": the wallet deliberately does NOT decrement, so
+      // the payout rate the player sees stays the real one. Topping the wallet
+      // up instead would hide the economy behind a number that only grows.
+      app.state.drops++;
+      UI.tick(app.state.coins);
+      var ct = Sim.drop(aim.x);
+      ct.ax = (Math.random() - 0.5) * 0.5;
+      return;
+    }
+    if (app.state.coins <= 0) { stopHold(); gesture.auto = false; return; }
       drop();
     }
     function startHold() {
@@ -974,6 +1047,7 @@
       // coins that went through the lit mouth this decade -- the number the tag
       // on the lip is showing, so the readout can be checked, not just admired
       mouth: app.state.mouth,
+    testMode: testMode,
       collected: Object.keys(UI.state.collected).length,
       started: app.state.started,
       // The shake meter is the one HUD number a screenshot can lie about, so
@@ -1035,6 +1109,13 @@
         }
         if (acc2 > 0) Sim.stepFall(acc2);
         return { t: +Sim.t.toFixed(2), stats: JSON.parse(JSON.stringify(Sim.stats)) };
+      },
+      // Test mode is not a bot concern; it is exposed here only so the suite
+      // can flip it without a reload.
+      testMode: function (on) {
+        var want = (on == null) ? !testMode : !!on;
+        if (want !== testMode) UI.onToggleTest();
+        return testMode;
       },
       // Press 拍機 through the same handler the button uses.
       slap: function () { UI.onSlap(); },
